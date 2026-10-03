@@ -61,6 +61,7 @@ import { startBlockDims } from '../sim/src/art/startblock.js';
 import { PAD_SIZE, FLEET_SCALE } from './layout.js';
 import { liveryHex } from './livery.js';
 import { quadMatrix } from './frame.js';
+import { dropHeight, liftState } from './paddock.js';
 
 export const MAX_QUADS = 50;
 export const FLEET_LAYER = 4;
@@ -322,8 +323,23 @@ export function buildFleet({ course }) {
     }
   });
 
-  /* ---- State. ---- */
+  /*
+   * ---- State. ----
+   *
+   * `target` is how many names there are, and `count` is how many quads are
+   * drawn, which is more while a deleted name's quad is lifting off. Each
+   * quad has the time it was set down and, if it is going, the time it was
+   * told to and the slot it was in, because the grid it left is not the grid
+   * that is there now. The clock is the sum of the dt it is given, and
+   * nothing here reads the wall.
+   */
   let count = 0;
+  let target = 0;
+  let calm = false;
+  let clock = 0;
+  const born = new Float64Array(MAX_QUADS).fill(-1e9);
+  const leaving = new Float64Array(MAX_QUADS).fill(-1);
+  const leaveSlots = new Array(MAX_QUADS).fill(null);
   let slots = [];
   let phase = 0;
   const pose = {};
@@ -334,15 +350,72 @@ export function buildFleet({ course }) {
   const rotorArrays = { front: bladeMatrices.front.array, rear: bladeMatrices.rear.array };
   const rgb = new THREE.Color();
 
-  function setCount(n) {
-    count = Math.max(0, Math.min(MAX_QUADS, n));
-    slots = count ? course.grid(count) : [];
+  function applyCount() {
     for (const m of meshes) {
       m.count = count;
     }
     bladeMeshes.front.count = count * 2;
     bladeMeshes.rear.count = count * 2;
     proxy.count = count;
+  }
+
+  /*
+   * How many names there are. A name added is a quad dropped onto the next
+   * block, a few hundredths of a second after the one before it when several
+   * come at once, so a pasted list rains in over about half a second and not
+   * all on one frame. A name taken away is a quad lifting off, which stays in
+   * the draw until it has gone. Asking for the number there already is does
+   * nothing, because the page asks every frame.
+   */
+  function setCount(n) {
+    const next = Math.max(0, Math.min(MAX_QUADS, n));
+    if (next === target) {
+      return;
+    }
+    if (next > target) {
+      const gap = Math.min(0.04, 0.6 / (next - target));
+      for (let i = target; i < next; i += 1) {
+        born[i] = clock + (i - target) * gap;
+        leaving[i] = -1;
+      }
+      count = Math.max(count, next);
+    } else {
+      for (let i = next; i < target; i += 1) {
+        leaveSlots[i] = slots[i];
+        leaving[i] = calm ? -1 : clock;
+      }
+      if (calm) {
+        count = next;
+      }
+    }
+    target = next;
+    slots = next ? course.grid(next) : [];
+    applyCount();
+  }
+
+  /* Under reduced motion a name is a quad on its block and a deleted name is gone: no drop and no lift. */
+  function setCalm(on) {
+    calm = Boolean(on);
+    if (calm && count !== target) {
+      for (let i = target; i < count; i += 1) {
+        leaving[i] = -1;
+      }
+      count = target;
+      applyCount();
+    }
+  }
+
+  /* Quads that have finished lifting off leave the draw, from the end, which is where the oldest are. */
+  function retire() {
+    let changed = false;
+    while (count > target && leaving[count - 1] >= 0 && liftState(clock - leaving[count - 1]).done) {
+      leaving[count - 1] = -1;
+      count -= 1;
+      changed = true;
+    }
+    if (changed) {
+      applyCount();
+    }
   }
 
   /* The livery of every entry, from its number: written once when the list changes, not per frame. */
@@ -370,12 +443,40 @@ export function buildFleet({ course }) {
    */
   function place({ plan = null, t = -1, spin = 0, dt = 0, discs = 0.14 }) {
     phase += spin * dt;
+    clock += dt;
     frontDiscMaterial.opacity = discs;
     rearDiscMaterial.opacity = discs;
+    const racing = Boolean(plan) && t >= 0;
+    if (racing && count !== target) {
+      /* A race is under way: whatever was lifting off has gone. */
+      for (let i = target; i < count; i += 1) {
+        leaving[i] = -1;
+      }
+      count = target;
+      applyCount();
+    }
+    retire();
     for (let i = 0; i < count; i += 1) {
-      blockPose(course, slots[i], park);
+      const going = leaving[i] >= 0;
+      blockPose(course, going ? leaveSlots[i] : slots[i], park);
+      let scale = FLEET_SCALE;
+      if (!racing && !calm) {
+        if (going) {
+          const lift = liftState(clock - leaving[i]);
+          park.z += lift.height;
+          scale = FLEET_SCALE * lift.scale;
+        } else {
+          const age = clock - born[i];
+          if (age < 0) {
+            /* Its turn to drop has not come: it is not there yet. */
+            scale = 0;
+          } else {
+            park.z += dropHeight(age);
+          }
+        }
+      }
       let source = park;
-      if (plan && t >= 0) {
+      if (racing) {
         plan.pose(i, Math.min(t, plan.duration), pose);
         if (t < LIFT_OFF) {
           const w = jerk(t / LIFT_OFF);
@@ -386,7 +487,7 @@ export function buildFleet({ course }) {
         }
         source = pose;
       }
-      quadMatrix(source, FLEET_SCALE, base);
+      quadMatrix(source, scale, base);
       for (let k = 0; k < 16; k += 1) {
         mat[i * 16 + k] = base[k];
       }
@@ -480,9 +581,13 @@ export function buildFleet({ course }) {
   }
 
   return {
-    group, proxy, setCount, setLiveries, place, attachPrepass, dispose, positions,
+    group, proxy, setCount, setCalm, setLiveries, place, attachPrepass, dispose, positions,
     get count() {
       return count;
+    },
+    /* How many names there are, which is what a caller compares with: `count` is more while quads are leaving. */
+    get target() {
+      return target;
     },
     get slots() {
       return slots;

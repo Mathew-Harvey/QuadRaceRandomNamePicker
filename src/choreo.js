@@ -86,6 +86,8 @@ export const LAPS = Object.freeze({ 15: 1, 30: 2, 60: 4 });
 export const LAUNCH = 1.5;
 export const BLEND = 3;
 export const TAIL = 3;
+/* How long the winner's flip takes, in seconds from the line: the camera is built to keep the winner in frame for most of it. */
+export const FLIP = 0.9;
 export const SPEED_BAND = Object.freeze({ min: 12, max: 36 });
 export const MIN_GAP_FIRST = 0.04;
 export const MIN_GAP = 0.08;
@@ -1185,8 +1187,8 @@ function assemble(order, length, laps, course, built, paths, attempt, fallback, 
       }
     }
     out.flip = 0;
-    if (i === winnerEntry && t >= finish[i] && t < finish[i] + 0.9) {
-      out.flip = 2 * PI * jerk((t - finish[i]) / 0.9);
+    if (i === winnerEntry && t >= finish[i] && t < finish[i] + FLIP) {
+      out.flip = 2 * PI * jerk((t - finish[i]) / FLIP);
     }
     return out;
   }

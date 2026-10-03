@@ -55,6 +55,9 @@
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+/* The order the panels open in. */
+const OPENING = ['big', 'second', 'third', 'order', 'seal', 'actions'];
+
 /* Where two lines meet: (a, b) and (c, d), as points. */
 function meet(a, b, c, d) {
   const r1 = [b[0] - a[0], b[1] - a[1]];
@@ -251,6 +254,8 @@ export function createPage(root, { winners, counts, onLayout }) {
       if (!el) {
         continue;
       }
+      /* The order the panels open in, for the stylesheet: the picture first. */
+      el.style.setProperty('--i', String(Math.max(0, OPENING.indexOf(name))));
       const box = boxOf(q);
       el.style.left = `${box.x.toFixed(1)}px`;
       el.style.top = `${box.y.toFixed(1)}px`;

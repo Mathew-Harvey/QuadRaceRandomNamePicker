@@ -335,3 +335,84 @@ Found on the way: the tower laid its rows out at the default row height, which i
 ### What went wrong
 
 - **A check that passed for the wrong reason, in my own command.** I chained the unit tests, the lint and the shots with `&&` behind a `| grep` and a `| tail`, and a pipeline's status is its last command's, so a failing suite would not have stopped the chain. I ran each on its own afterwards, with its own exit code, and put that in this entry's numbers.
+
+
+## 2026-10-03 | milestone 5 | Polish
+
+### What changed
+
+- **Sound** is `src/sound.js`. The motors are the simulator's own `MotorAudio` (four oscillators at blade pass frequency), driven by the pace of the leading group: they spool up under the descent, run through the race, click at the line each lap and spool down after the winner has crossed. The three amber tones, the long green one and the winner's sting are this app's own, plain oscillators with an envelope on a bus the mute reaches. Nothing is built until a pointer press or a key, the mute is a kept preference, and `body[data-sound]` says what it is doing so a check can wait for it.
+- **The aerial** is an orbit round the line instead of a straight run, so the gantry's lamps stay in frame from the first amber to green on a wide window and on a phone, and the oval's four ends are in its first frame. **The rail's first frame** aims behind the pack for the first seconds, so the gantry's near upright is not a pole through the middle of it.
+- **The calm rail**, for a person who has asked for less motion: wider (56 degrees), no more than 25 degrees a second, and when the leader gets near the edge of the frame it cuts to where the camera would have been and is still. It has a table of its own per window shape, and the race rail's table is untouched by it. The paddock orbit is still, no quad drops or lifts, and the results page's panels do not open one after another.
+- **The finish frame**: the rail parks 6 m short of the line as before, and as it comes in it turns to look at the line and widens by 4 degrees, in one eased ramp over the last 30 m of its run. The winner's flip used to happen off screen.
+- **The paddock**: a name typed drops a quad onto the next block (a fall under gravity and one small bounce, a few hundredths of a second after the one before when a list is pasted), a deleted name's quad lifts off and shrinks away. `src/paddock.js` is the two curves, pure, so a test holds them.
+- **The results page opens** over the held frame: the paper, then the panels one after another with the picture first. `src/page.js` gives each panel its place in that order and the stylesheet does the rest.
+- **`README.md`** says what it is, how to use it, how the draw works, how to check one three ways, how to run it, how to check the code, what is where, and the licence.
+- **A stray caption**: "Type names to fill the grid" stood across the middle of a replay started from the draw log with nothing typed on the sheet. One function, `syncEmptyNote`, decides it, from the state and from typing and from the field's build.
+- **Tests and checks**: `tests/camera.test.js` has four new tests (the lamps in frame, the oval's ends and the near upright, the calm rail, the finish frame), `tests/sound.test.js` five and `tests/paddock.test.js` two. `scripts/shots.js` has two new scenarios, `sound` (the real audio graph on an `OfflineAudioContext`, the buffer read) and `photo` (a kept draw whose first two cross 0.07 s apart, in `tests/lib/photo-finish.json`), and more in the others: the live audio wiring seen from outside, the drops, the opening, a replay from an empty sheet.
+
+### Measured
+
+    npm test        137 of 137 pass (125 at the end of milestone 4: five camera tests, five sound tests and two paddock tests are new)
+    npm run lint    16 of 16 clean
+    node scripts/csp.js --check   both pages current
+    node scripts/shots.js   128 of 128 checks, nine scenarios (flow 37, sheet 18, actions 11, sound 20, reduced 7, reload 13, phone 6,
+                            bare 10, photo 6), about three and a half minutes of wall clock; check 13 read the page 407 times through the race
+
+    the finish frame, the winner in the rail's frame after the line, over the same nine plans before and after (the flip takes 0.9 s):
+        wide window       0.08 to 0.35 s before, 0.45 to 1.03 s after, median 0.73
+        phone upright     0.02 to 0.26 s before, 0.30 to 0.76 s after, median 0.53
+        calm rail         0.31 s at the least and 0.57 median on a wide window, 0.00 and 0.11 on a phone (not changed, and not held by a test)
+        in the page       the photo finish draw replayed at the real speed: the winner's tag on the glass for 1.00 and 1.04 s of race time
+                          after the line on two runs, and for 0.48 s with the turn taken out, which is where the check's 0.75 came from
+    the leading quads' width at 1920 by 1080, the top three over nine plans, before and after the turn:
+        5th percentile 37.1 and 36.8 px, median 48.0 and 48.0, least 29.6 and 29.6; the test's floors (36, 40 and 28) were not touched
+    the photo finish, live: the last 0.8 s runs at 0.32 to 0.34 of the speed over 21 or 22 frames, and the beats go Photo finish, then "Raj wins"
+    the rail's worst yaw rate 44.9 degrees a second over nine plans at 120 Hz, with the turn in; the leader out of frame in 0 of 17,786 frames,
+        on a wide window and on a phone held upright
+    the calm rail's worst yaw between cuts 26.5 degrees a second on a wide window and 26.6 on a phone, cuts at most 7.5 a lap wide and 18.0
+        on a phone, and the leader out of frame in 0 of 35,559 frames at both
+
+    two mutation tests: with `syncEmptyNote` taken out of `setState`, the new reload check fails and nothing else in that scenario does; with the finish turn
+    taken out, the photo scenario's on-glass check fails at 0.48 s. Each file was put back and compared byte for byte with the copy kept first.
+
+Not measured: a real GPU, a real phone, any browser but Chromium, how any of the sound sounds, the feel of any camera move in motion (about ten frames a second here), a screen reader, or whether anyone enjoys it. Those are the owner's pass.
+
+### What went wrong, in the order it was found
+
+- **MotorAudio's music player broke the policy.** The first time a gesture built the graph, check 12 reported a Content-Security-Policy violation on the console, and it was a media one. The player sets an audio element's source to the first track of a crate, and the page's policy has no `media-src` and never will. Switching the music off is not enough, because attaching it is what asks. The instance's `music` is replaced by an object that does nothing, and `sim/` is untouched.
+- **Two earlier aerials turned too fast, and one lost the gantry.** A straight run past the line turned the camera at 67 degrees a second where it went by, and an angle interpolated between two ends lost the lamps in the middle. The orbit makes the turn the bearing's own swing, 34 degrees a second at its fastest.
+- **The live sound checks assumed a second of wall time between lamps and the wrong windows for the sting.** The clock runs slower than the wall on a software rasteriser (a frame is clamped to a tenth of a second), so the checks use ratios and the sting's four notes at their real offsets.
+- **The calm rail counted hundreds of cuts.** After the camera has parked and the pack has gone on past it, every frame is "the leader is outside the frame", and a cut that would not move the camera is not a cut. And the threshold did not know the shape of the window. It counts only cuts that move the camera, and the table is made for the window's aspect, in quarters.
+- **The reduced motion paddock still orbited.** It showed as about five pixels of drift in a name tag, found by the check that nothing animates. The orbit stands still when the setting is on.
+- **A quote escaped twice** in the sound scenario's page script, which was a syntax error in the page and not in the file.
+- **The photo finish was checked as arithmetic and passed, and then looked at, and showed two things.** The clock did run at a third inside the window, and the beat did say so. But the picture had "Type names to fill the grid" standing across the middle of it, and the winner left the frame between 0.1 and 0.35 s after the line, in a flip that takes 0.9 s: the one thing the brief says the winner does, nobody would see until the results page. The caption was a state bug, found by looking. The flip needed the lens to turn to the line, and I found how much by measuring the winner's bearing in the held frame over nine plans, before changing anything.
+- **Widening the lens until it holds the whole flip would have been the wrong fix.** The frame would have to hold about 17 m of approach and 20 m of flight after the line, 37 m across at 20 m, which is a 55 degree lens and quads about 40 per cent smaller, and a photo finish between two ten pixel specks says nothing. Turning the aim to the line and widening by 4 degrees costs 0.3 of a pixel at the fifth percentile of the leading quads' width (37.1 to 36.8 px at 1080 lines) and nothing at the median (48.0).
+
+- **My first threshold for the photo scenario's on-glass check was half a second, and it was 0.02 s from the broken value.** I took the turn out to see the check fail, and it failed, but only just: the tag of a top three quad stands where its quad is and a quad has gone before its tag does, so the page sees 0.48 s where the geometry says 0.25. It is 0.75 s now, between the two values I measured (1.04 with the turn, 0.48 without). The check is new and had never been relied on, and the number was moved to make it tell the two cases apart and not to make anything pass.
+
+### Decisions to know about
+
+- **The sound is silent until a gesture and never plays music.** `CLAUDE.md` has the decision and the reason.
+- **Why 6 m and 4 degrees.** The turn aims the parked camera at the line, which is 6 m ahead of it. Aiming 2 m past the line would keep the winner in frame longer (0.60 to 1.29 s) and loses the leader on the way in on a phone held upright, by 2.3 degrees, so it is not allowed. A widening of 8 degrees instead of 4 adds about a tenth of a second on a wide window and makes the quads a tenth smaller, and does nothing on a phone, whose lens is already the 50 degrees across a narrow window needs.
+- **The finish frame does not apply to the calm rail**, which is wide already, and where a turn of the lens would be a glide. The winner is in the calm frame for 0.31 s at the least and 0.57 s median on a wide window, and for 0.00 s and 0.11 s on a phone held upright, which the calm tests do not hold. A person who asked for less motion sees less of a flip, and I took that as the request being kept and not as a fault.
+- **With more than one winner the flip is in the held frame**, because the brief has the camera hold until the last drawn winner has crossed. The first place's flip happens in front of whatever else is crossing, and the results page's picture shows it either way.
+- **The phone held upright has the same finish frame**, and the winner stays in it for a shorter time (0.31 to 0.76 s, median 0.53), because its frame is narrower. It is a phone's compromise, said in the test.
+- **The page's opening is staggered in CSS**, with the order in `src/page.js`, and the reduced motion block zeroes the delays too.
+- **A quad that is lifting off is still in the draw** (`count` is more than `target`), and a race that starts while one is lifting takes it away at once.
+
+### What I saw and did not fix
+
+- **On a phone held upright the pack is a few pixels.** The lens is at the 50 degrees across that a narrow window needs to show the track, and the rail is 20 m from the line. The tags carry it. Landscape is the way to watch a phone.
+- **Nobody has heard the sound.** There is no speaker in this container. The offline render proves the notes are at their pitches and at their times, that the motors follow the pace, that the click is at the line and that the mute is obeyed, and it proves nothing about whether it sounds good.
+- **The frame rate here is about ten a second**, on a software rasteriser. The easing of every camera move, the feel of the descent, the drop of a quad and the page opening were judged from stills and from arithmetic, and never from motion. That is the owner's pass.
+- **The seal panel on the results page scrolls inside its panel at 900 px high**, so its last paragraph is cut at the foot until it is scrolled. The panel is built to scroll, with a thin bar.
+- **The winner's quad in the results picture is mid flip and upside down**, a dark underside with a lilac blur of rotor. It reads as a quad in the middle of a flip, which it is.
+
+### Not done, by design
+
+A `v2` of the algorithm, a server of any kind, any partner mark, the site icon, and the picker's own sound design beyond the tones and the sting. The brief's list for this milestone is complete.
+
+### Open questions for the owner
+
+The site icon's accent (the page ships `data:,`), whether the picker is mounted under `webfpv.org/<mount>/` (every URL is already relative, and the `?v=` rule would apply from that day), whether any official partner mark appears here (none does: this app runs no Betaflight code and a placement is agreed one at a time), and whether to push the branch to `main` again (it is a fast forward of the owner's last push; I have not).

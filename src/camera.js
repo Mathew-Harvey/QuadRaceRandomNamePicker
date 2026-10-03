@@ -19,8 +19,9 @@
  *   aerial     high over the field, then down to the rail, for the lights.
  *   rail       the race: side on from the infield, on a rail concentric with
  *              the line, following the leading group, leaving room ahead.
- *              It glides to a stop square to the line, so the pack crosses
- *              a still frame.
+ *              It glides to a stop short of the line, turning to look at the
+ *              line as it stops, so the pack crosses a still frame with the
+ *              line in the middle of it and room after the line for the flip.
  *   held       the rail's frame where it stops, as a fixed shot.
  *   hero       the winner, close, a moment after the line, for the results
  *              page's big panel.
@@ -60,6 +61,41 @@ import { GRID, cosPi, sinPi } from './course.js';
 export const RAIL_FOV = 34;
 export const OPEN_FOV = 46;
 export const AERIAL_FOV = 54;
+
+/*
+ * The calm rail, for a person who has asked for less motion: wider, so the
+ * pack has room, and slower, no more than 25 degrees a second where the race
+ * rail may turn at 44. A camera that cannot turn as fast as the pack goes
+ * round a bend would lose it, so it does not try: when the leader is further
+ * than CALM_CUT of the way from the middle of the frame to its edge, the
+ * camera is put where it would have been, in one cut, and is still. It aims
+ * only 1.5 m ahead of the group, where the race rail aims 4.5, so the leader
+ * starts near the middle and the room to lag in is most of the frame. The
+ * frame is the one the window really has, so the table is made for an aspect.
+ */
+export const CALM_FOV = 56;
+export const CALM_YAW = 25;
+export const CALM_CUT = 0.8;
+export const CALM_AHEAD = 1.5;
+
+/* When in the lights' run the first amber lamp is lit, as a fraction of it, at the latest: the gantry is in frame from here to green. */
+export const FIRST_LAMP_K = 0.385;
+
+/*
+ * THE FINISH FRAME. The rail parks 6 m short of the line, which keeps the
+ * gantry's near upright off the crossing, but a camera that looks abeam of
+ * where it has parked has the line at the right hand edge of its frame and
+ * loses the winner between 0.1 and 0.35 s after the line, measured over
+ * nine plans, in a flip that takes 0.9 s: nobody saw it until the results
+ * page. So as the eye comes in to its stop the lens turns to look AT the line
+ * and widens by FINISH_WIDEN degrees, in one eased ramp over the last
+ * FINISH_EASE metres of the eye's run. At the stop the line is in the middle of
+ * the frame, the last 11 m of the approach are in it, and so are the first 16 m
+ * after the line, which is most of the flip. The calm rail does none of it: it
+ * is wide already, and a turn of the lens is a glide.
+ */
+export const FINISH_EASE = 30;
+export const FINISH_WIDEN = 4;
 
 /*
  * The winner's picture: 2.4 m off and a little below, looking up, 30 degrees
@@ -180,12 +216,26 @@ export function makeShots({ course }) {
    * for the length of the fastest stretch, which is a few degrees of the
    * 57 the frame is wide, and catches up on the next straight.
    */
+  /*
+   * Where the rail aims relative to the group, in metres ahead of it: behind
+   * it at the start, so the grid fills the left of the frame and the
+   * gantry's near upright, which stands at the line, is well to the right of
+   * the middle and not a pole through it, and 4.5 m ahead of it once the
+   * launch is over, which is room for the pack to cross.
+   */
+  const AHEAD_START = -4;
+  const AHEAD_RACE = 4.5;
   const MAX_YAW = (44 * Math.PI) / 180;
   const MAX_SPEED = 80;
   const CATCH_UP = 1.5;
   const TABLE_HZ = 60;
   const tables = new WeakMap();
+  /* One table per window shape, in quarters of an aspect: the cuts depend on how wide the frame is. */
+  const calmTables = new Map();
   const here = {};
+  const calmEye = {};
+  const calmAim = {};
+  const calmLeader = {};
 
   /*
    * Where the rail camera is abeam of, at every sixtieth of a second of a
@@ -193,44 +243,90 @@ export function makeShots({ course }) {
    * back. It is worked out once per plan, from the plan alone, so the camera
    * is still a function of the plan and the clock and nothing else: a seek, a
    * pause and a replay all read the same table.
+   *
+   * The calm rail is the same table with a slower turn limit and cuts: the
+   * entry where a cut happens is marked, and a reader does not interpolate
+   * across it.
    */
-  function railTable(plan) {
-    const known = tables.get(plan);
+  function railTable(plan, calm = false, aspect = 16 / 9) {
+    const shape = Math.round(Math.min(2, Math.max(0.4, aspect)) * 4) / 4;
+    if (calm && !calmTables.has(shape)) {
+      calmTables.set(shape, new WeakMap());
+    }
+    const store = calm ? calmTables.get(shape) : tables;
+    const known = store.get(plan);
     if (known) {
       return known;
     }
+    const maxYaw = calm ? (CALM_YAW * Math.PI) / 180 : MAX_YAW;
+    /* How far from the middle of this window's frame the leader may get: a share of the way to its edge. */
+    const vertical = (fovFor(CALM_FOV, shape) * Math.PI) / 180;
+    const cutAt = CALM_CUT * Math.atan(Math.tan(vertical / 2) * shape);
     const stopS = plan.laps * course.lap - STOP_SHORT;
     const frames = Math.ceil(plan.duration * TABLE_HZ) + 2;
     const table = new Float64Array(frames);
+    const cuts = new Uint8Array(frames);
     let camera = 0;
     let before = 0;
     for (let i = 0; i < frames; i += 1) {
       const time = i / TABLE_HZ;
       const open = 1 - jerk(time / 4);
-      const ahead = 1 + 3.5 * (1 - open);
+      const ahead = calm ? CALM_AHEAD : AHEAD_START + (AHEAD_RACE - AHEAD_START) * (1 - open);
       const target = softMin(groupAt(plan, time) + ahead, stopS, 5);
       if (i === 0) {
         camera = target;
       } else {
         course.at(camera, here);
         const curvature = Math.abs(here.kappa);
-        const limit = curvature > 1e-6 ? Math.min(MAX_SPEED, MAX_YAW / curvature) : MAX_SPEED;
+        const limit = curvature > 1e-6 ? Math.min(MAX_SPEED, maxYaw / curvature) : MAX_SPEED;
         const wanted = (target - before) * TABLE_HZ + CATCH_UP * (target - camera);
         camera += Math.max(0, Math.min(limit, wanted)) / TABLE_HZ;
+        if (calm) {
+          /* Where the leader is in the frame this camera has: if it is nearly out of it, cut. */
+          plan.rank(time, ranking);
+          const lead = plan.curves[ranking[0]].s(time);
+          course.rail(camera, calmEye);
+          course.place(camera, 0, 1.4, calmAim);
+          course.place(lead, 0, 1.4, calmLeader);
+          const yaw = Math.atan2(calmAim.y - calmEye.y, calmAim.x - calmEye.x);
+          const bearing = Math.atan2(calmLeader.y - calmEye.y, calmLeader.x - calmEye.x) - yaw;
+          const wrapped = Math.atan2(Math.sin(bearing), Math.cos(bearing));
+          /* A cut that would not move the camera, which is every frame after the camera has stopped and the pack has gone on past it, is not a cut. */
+          if (Math.abs(wrapped) > cutAt && Math.abs(target - camera) > 1) {
+            camera = target;
+            cuts[i] = 1;
+          }
+        }
       }
       table[i] = camera;
       before = target;
     }
-    tables.set(plan, table);
-    return table;
+    const built = { table, cuts };
+    store.set(plan, built);
+    return built;
   }
 
-  /* The rail's position at a clock, between two entries of the table. */
-  function railS(plan, t) {
-    const table = railTable(plan);
+  /* The rail's position at a clock, between two entries of the table, and not across a cut. */
+  function railS(plan, t, calm = false, aspect = 16 / 9) {
+    const { table, cuts } = railTable(plan, calm, aspect);
     const f = Math.min(Math.max(t, 0) * TABLE_HZ, table.length - 1.001);
     const i = Math.floor(f);
+    if (cuts[i + 1]) {
+      return table[i];
+    }
     return table[i] + (table[i + 1] - table[i]) * (f - i);
+  }
+
+  /* When the calm rail cuts, in seconds of race time. */
+  function calmCuts(plan, aspect = 16 / 9) {
+    const { cuts } = railTable(plan, true, aspect);
+    const out = [];
+    for (let i = 0; i < cuts.length; i += 1) {
+      if (cuts[i]) {
+        out.push(i / TABLE_HZ);
+      }
+    }
+    return out;
   }
 
   /*
@@ -239,13 +335,15 @@ export function makeShots({ course }) {
    * to a stop short of the finish line so the pack crosses a still frame.
    * Everything is in the same unwrapped metres the plan's progress is in.
    */
-  function rail(plan, t, out = {}) {
+  function rail(plan, t, out = {}, calm = false, aspect = 16 / 9) {
     const clock = Math.max(0, t);
     const open = 1 - jerk(clock / 4);
-    const aimS = railS(plan, clock);
+    const aimS = railS(plan, clock, calm, aspect);
+    /* How far into the finish frame the eye is: 0 until it is within FINISH_EASE of its stop, 1 at it. */
+    const turn = calm ? 0 : jerk(1 - (plan.laps * course.lap - STOP_SHORT - aimS) / FINISH_EASE);
     course.rail(aimS, eye);
-    course.place(aimS, 0, 1.4, aim);
-    const fov = RAIL_FOV + (OPEN_FOV - RAIL_FOV) * open;
+    course.place(aimS + STOP_SHORT * turn, 0, 1.4, aim);
+    const fov = calm ? CALM_FOV : RAIL_FOV + (OPEN_FOV - RAIL_FOV) * open + FINISH_WIDEN * turn;
     return lookAt(out, eye, aim, fov);
   }
 
@@ -260,7 +358,27 @@ export function makeShots({ course }) {
    * gantry's lamps face: the three amber and the green are read from the
    * grid's end of the straight, and the descent keeps them in view until it
    * has swung round to the rail.
+   *
+   * THE EYE ORBITS THE LINE. Its place is worked out as a bearing and a
+   * range from the point the rail first looks at, which is where the lamps
+   * are, with the bearing swung the short way round from behind the grid to
+   * the rail and the range shrinking by a fixed fraction a second. Two
+   * earlier versions did it with straight lines, and both turned too fast
+   * where the eye went by the line: a straight path past a point at 20 m
+   * turns the camera at the path's speed over its distance, which was 67
+   * degrees a second at the end, and an angle that is interpolated between
+   * two ends loses the thing looked at in the middle. On an orbit the turn
+   * IS the swing of the bearing, which is 90 degrees eased over the run:
+   * about 34 degrees a second at its fastest over five seconds.
+   *
+   * THE LOOK is the middle of the oval at first, so the whole of it and the
+   * boards round it are in the frame, and the line by the time the first
+   * lamp is lit, so that for the lamps, which are the point of the shot, the
+   * gantry is in the frame the whole way down.
    */
+  const LOOK_BY = 0.38;
+  const LOOK_X = 0;
+  const LOOK_Y = -8;
   function aerial(k, plan, out = {}) {
     const e = jerk(k);
     const first = rail(plan, 0, {});
@@ -269,49 +387,38 @@ export function makeShots({ course }) {
     const backX = at.x - at.tx * 118;
     const backY = at.y - at.ty * 118 - 14;
     const backZ = 95;
-    /* Looking at the middle of the oval, so the whole of it and the boards round it are in the frame. */
-    const lookX = 0;
-    const lookY = -8;
-    /*
-     * The eye goes in a straight line, and the look is turned by angle, not
-     * by sliding its target: two points sliding past each other swing the
-     * bearing between them quickest just where they meet, and the descent
-     * turned 82 degrees a second at its end. Turned by angle, through the
-     * shorter way round, with the pitch and the distance eased the same, the
-     * swing is the easing's own: about 40 degrees a second at its peak.
-     */
-    const yaw0 = Math.atan2(lookY - backY, lookX - backX);
-    const yaw1 = Math.atan2(first.ty - first.y, first.tx - first.x);
-    const pitch0 = Math.atan2(backZ, Math.hypot(lookX - backX, lookY - backY));
-    const pitch1 = Math.atan2(first.z - first.tz, Math.hypot(first.tx - first.x, first.ty - first.y));
-    const reach0 = Math.hypot(lookX - backX, lookY - backY, backZ);
-    const reach1 = Math.hypot(first.tx - first.x, first.ty - first.y, first.tz - first.z);
-    let turn = yaw1 - yaw0;
-    while (turn > Math.PI) {
-      turn -= 2 * Math.PI;
+    const dx0 = backX - first.tx;
+    const dy0 = backY - first.ty;
+    const dx1 = first.x - first.tx;
+    const dy1 = first.y - first.ty;
+    const r0 = Math.sqrt(dx0 * dx0 + dy0 * dy0);
+    const r1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+    const a0 = Math.atan2(dy0, dx0);
+    let swing = Math.atan2(dy1, dx1) - a0;
+    while (swing > Math.PI) {
+      swing -= 2 * Math.PI;
     }
-    while (turn < -Math.PI) {
-      turn += 2 * Math.PI;
+    while (swing < -Math.PI) {
+      swing += 2 * Math.PI;
     }
-    const yaw = yaw0 + turn * e;
-    const pitch = pitch0 + (pitch1 - pitch0) * e;
-    const reach = reach0 + (reach1 - reach0) * e;
-    eye.x = backX + (first.x - backX) * e;
-    eye.y = backY + (first.y - backY) * e;
+    const bearing = a0 + swing * e;
+    const range = r0 * Math.pow(r1 / r0, e);
+    eye.x = first.tx + range * cosPi(bearing / Math.PI);
+    eye.y = first.ty + range * sinPi(bearing / Math.PI);
     eye.z = backZ + (first.z - backZ) * e;
-    const flat = reach * Math.cos(pitch);
-    aim.x = eye.x + flat * Math.cos(yaw);
-    aim.y = eye.y + flat * Math.sin(yaw);
-    aim.z = eye.z - reach * Math.sin(pitch);
+    const w = jerk(Math.min(1, k / LOOK_BY));
+    aim.x = LOOK_X + (first.tx - LOOK_X) * w;
+    aim.y = LOOK_Y + (first.ty - LOOK_Y) * w;
+    aim.z = first.tz * w;
     return lookAt(out, eye, aim, AERIAL_FOV + (first.fov - AERIAL_FOV) * e);
   }
 
-  /* The held frame, where the rail stops: a shade wider than the race, so the pack has room to cross it. */
+  /* The held frame, where the rail stops: looking at the line, a shade wider than the race, so the pack has room to cross it and the winner room to flip. */
   function held(plan, out = {}) {
     const stopS = plan.laps * course.lap - STOP_SHORT;
     course.rail(stopS, eye);
-    course.place(stopS, 0, 1.4, aim);
-    return lookAt(out, eye, aim, RAIL_FOV + 4);
+    course.place(stopS + STOP_SHORT, 0, 1.4, aim);
+    return lookAt(out, eye, aim, RAIL_FOV + FINISH_WIDEN);
   }
 
   /*
@@ -345,5 +452,7 @@ export function makeShots({ course }) {
     return lookAt(out, eye, aim, HERO_FOV);
   }
 
-  return { paddock, aerial, rail, held, hero, groupAt, railS, fovFor, stopShort: STOP_SHORT };
+  return {
+    paddock, aerial, rail, held, hero, groupAt, railS, calmCuts, fovFor, stopShort: STOP_SHORT,
+  };
 }

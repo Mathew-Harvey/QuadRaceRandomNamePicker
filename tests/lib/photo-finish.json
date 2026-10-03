@@ -1,0 +1,26 @@
+{
+  "algorithm": "webfpv-picker/v1",
+  "title": "Photo finish",
+  "sealedAt": "2026-10-03T12:00:00.000Z",
+  "names": [
+    "Sam",
+    "Ana",
+    "Raj",
+    "Mia",
+    "Leo",
+    "Zoe",
+    "Kai",
+    "Eva",
+    "Jin",
+    "Ola",
+    "Tom",
+    "Uma"
+  ],
+  "winners": 1,
+  "length": 30,
+  "listDigest": "16098e205624469fbfc299b6d74c261091503287ea96b31a186c60b327d0e17d",
+  "commitment": "8d4cd7c7c9717c929cbc8b84a18a1ff1756953ebdb640cb334fefa9c194c22a7",
+  "seed": "3fcd4678e0191af07b2fe0e15a2d5b3cdc1badaa5b93e85e1c06b125391e6e52",
+  "order": [2, 1, 10, 11, 0, 5, 9, 4, 8, 7, 6, 3]
+}
+

@@ -68,6 +68,7 @@ import {
   oddsLines, photoWindow, placeTags, readNames, standings, winnersAllowed,
 } from './show.js';
 import { createHud } from './hud.js';
+import { RPM, createSound, raceRpm } from './sound.js';
 import { buildResults, copyReceipt, saveReceipt } from './results.js';
 import { letterTitles } from './titles.js';
 import { createStore, pageStorage } from './store.js';
@@ -141,12 +142,34 @@ const ui = {
   logClear: $('log-clear'),
   forget: $('forget'),
   present: $('present'),
+  sound: $('sound'),
   emptyNote: $('empty-note'),
   sheet: $('sheet'),
   lap: $('hud-lap'),
 };
 
 const hud = createHud({ reduced: REDUCED });
+
+/*
+ * The sound, which is silent until a gesture and muted by a preference that is
+ * kept. `body[data-sound]` says what it is doing, for the checks to wait on and
+ * for nothing else: none, ready (before a gesture), on, muted, or blocked (a
+ * context the browser has put to sleep).
+ */
+const sound = createSound({
+  muted: store.get('sound', 'on') === 'off',
+  onState: (value) => {
+    body.dataset.sound = value;
+    renderSoundButton();
+  },
+});
+
+function renderSoundButton() {
+  ui.sound.hidden = !sound.supported;
+  const on = !sound.muted;
+  ui.sound.textContent = on ? 'Sound on' : 'Sound off';
+  ui.sound.setAttribute('aria-pressed', String(on));
+}
 
 /* ------------------------------------------------------------------ */
 /* State                                                                */
@@ -189,7 +212,18 @@ const slotErrors = Array.from({ length: SLOTS }, () => '');
 function setState(next) {
   state = next;
   body.dataset.state = next;
+  syncEmptyNote();
   aimShift(false);
+}
+
+/*
+ * "Type names to fill the grid" belongs to the sheet's time. It was left
+ * standing over a replay started from the draw log with nothing typed on the
+ * sheet, because only typing and the field's first build ever decided it:
+ * seen in a frame of the photo finish, across the middle of the picture.
+ */
+function syncEmptyNote() {
+  ui.emptyNote.hidden = list.entries.length > 0 || noWorld || (state !== 'setup' && state !== 'loading');
 }
 
 /*
@@ -341,7 +375,7 @@ function onNames(save = true) {
   }
   ui.splitOffer.hidden = !parts || splitDismissed;
 
-  ui.emptyNote.hidden = n > 0 || noWorld || (state !== 'setup' && state !== 'loading');
+  syncEmptyNote();
   notice = null;
   renderStatus();
   clearTimeout(namesSaver);
@@ -663,7 +697,7 @@ async function buildField() {
   if (state === 'loading') {
     setState('setup');
   }
-  ui.emptyNote.hidden = list.entries.length > 0 || noWorld;
+  syncEmptyNote();
   renderStatus();
 }
 
@@ -747,11 +781,15 @@ async function startShow({ receipt, replay, kept = true }) {
     t: 0,
     prevT: -1e-9,
     crossed: false,
+    amberSaid: 0,
+    greenSaid: false,
+    gates: 0,
     order: new Array(plan.count),
     gaps: new Array(plan.count).fill(0),
   };
   hud.setField(names);
   hud.clear();
+  sound.hush();
   hud.replayFlag(replay);
   ui.lap.classList.remove('final');
   hud.skip.hidden = false;
@@ -866,9 +904,9 @@ function step(dt) {
   const offset = shiftOffset(dt);
   if (!show) {
     if (world) {
-      orbit += dt;
+      orbit += REDUCED() ? 0 : dt;
       world.frame({
-        shot: 'paddock', t: orbit, count: list.entries.length, spin: 0, dt, wall, lamps: LAMPS_OFF, offset,
+        shot: 'paddock', t: orbit, count: list.entries.length, spin: 0, dt, wall, lamps: LAMPS_OFF, offset, calm: REDUCED(),
       });
       paddockTags(list.entries.length);
     }
@@ -884,11 +922,11 @@ function step(dt) {
   switch (show.phase) {
     case 'seal': {
       show.u += dt;
-      orbit += dt;
+      orbit += REDUCED() ? 0 : dt;
       body.dataset.lamps = '0';
       if (world) {
         world.frame({
-          shot: 'paddock', t: orbit, count, spin: 0, dt, wall, lamps: LAMPS_OFF, offset,
+          shot: 'paddock', t: orbit, count, spin: 0, dt, wall, lamps: LAMPS_OFF, offset, calm: REDUCED(),
         });
         paddockTags(count);
       }
@@ -918,6 +956,16 @@ function step(dt) {
       show.u += dt;
       const lit = lightsAt(show.lights, show.u);
       body.dataset.lamps = lit.green ? 'go' : String(lit.amber);
+      /* A tone for each lamp as it is lit, a long one for green, and the motors spooling up under the descent. */
+      while (show.amberSaid < lit.amber) {
+        show.amberSaid += 1;
+        sound.tone('amber');
+      }
+      if (lit.green && !show.greenSaid) {
+        show.greenSaid = true;
+        sound.tone('green');
+      }
+      sound.motors({ rpm: RPM.idle * Math.min(1, lit.k * 1.4), speed: 0 });
       /* Under reduced motion there is no descent: the show cuts to the rail where the race will begin. */
       world.frame({
         shot: REDUCED() ? 'rail' : 'aerial',
@@ -930,6 +978,7 @@ function step(dt) {
         wall,
         lamps: [lit.amber, lit.green],
         offset,
+        calm: REDUCED(),
       });
       if (lit.green) {
         show.phase = 'race';
@@ -942,13 +991,22 @@ function step(dt) {
       show.t = advanceClock(show.t, dt * SPEED, show.window);
       const t = show.t;
       world.frame({
-        shot: 'rail', t, plan, count, spin: 900, dt, discs: 0.24, wall, lamps: [0, true], offset,
+        shot: 'rail', t, plan, count, spin: 900, dt, discs: 0.24, wall, lamps: [0, true], offset, calm: REDUCED(),
       });
       if (!show.crossed && t >= show.first) {
         show.crossed = true;
+        sound.sting();
         setState('finish');
       }
       overlay(t);
+      /* The motors sing at the pace of whoever leads, and the leader's crossing of the line each lap is a click. */
+      plan.pose(show.order[0], t, scratch);
+      sound.motors({ rpm: raceRpm(scratch.speed, t, show.first), speed: scratch.speed });
+      const lapsDone = Math.min(plan.laps, Math.floor(scratch.s / plan.course.lap));
+      if (lapsDone > show.gates) {
+        show.gates = lapsDone;
+        sound.gate();
+      }
       if (t >= show.endsAt) {
         finishShow();
       }
@@ -1014,6 +1072,19 @@ function drawHero() {
   target.height = Math.max(1, Math.round(panel.box.h * k));
   const ctx = target.getContext('2d');
   ctx.drawImage(canvas, panel.box.x * k, panel.box.y * k, panel.box.w * k, panel.box.h * k, 0, 0, target.width, target.height);
+  /* The canvas itself goes back to the race's held frame, which is what the page opens round: it is in the hole of the paper while the picture comes in over it. */
+  world.frame({
+    shot: 'rail',
+    t: Math.min(show.plan.duration, show.endsAt),
+    plan: show.plan,
+    count: show.plan.count,
+    spin: 900,
+    dt: 0,
+    discs: 0.24,
+    wall,
+    lamps: [0, true],
+    calm: REDUCED(),
+  });
 }
 
 /*
@@ -1035,6 +1106,7 @@ async function finishShow() {
   const current = show;
   current.phase = 'done';
   hud.skip.hidden = true;
+  sound.hush();
   if (!crossingMatchesDraw(current.plan, current.receipt.order)) {
     console.error('The race crossed the line in a different order from the draw. The page shows the draw.');
   }
@@ -1118,6 +1190,7 @@ function leaveResults(toSetup = true) {
     return;
   }
   show = null;
+  sound.hush();
   hud.setField(list.entries);
   hud.clear();
   hud.hideSeal();
@@ -1316,6 +1389,24 @@ function wire() {
     say('Forgotten. Nothing this page kept is left in this browser.');
   });
 
+  /* The first press or key is what lets the browser start sound, and every later one asks a context it has put to sleep to come back. */
+  for (const type of ['pointerdown', 'keydown', 'touchend']) {
+    window.addEventListener(type, () => sound.unlock(), { capture: true, passive: true });
+  }
+  ui.sound.addEventListener('click', () => {
+    sound.setMuted(!sound.muted);
+    store.set('sound', sound.muted ? 'off' : 'on');
+    if (!sound.muted) {
+      sound.unlock();
+    }
+  });
+  /* A hidden tab stops the race, so it stops the motors: they would otherwise hold their last note until somebody came back. */
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      sound.hush();
+    }
+  });
+
   ui.present.addEventListener('click', togglePresent);
   document.addEventListener('fullscreenchange', () => {
     if (!document.fullscreenElement && body.classList.contains('present')) {
@@ -1375,6 +1466,8 @@ async function main() {
   renderLog();
   onNames();
   renderStatus();
+  renderSoundButton();
+  body.dataset.sound = sound.state;
   aimShift(true);
   lastNow = performance.now();
   requestAnimationFrame(frame);

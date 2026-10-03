@@ -33,7 +33,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net/npm/three@0.160.0/ 'sha256-UK9O+rbB3KhDsGQrE55qyNAJCpV7WHc47zV2U5f4bE4='; style-src 'self' 'sha256-FL7NgN21h3sOPhD9WPJZLi7ZSjrYXCTzzZli70s/RhE='; img-src 'self' data: blob:; connect-src 'self'; font-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net/npm/three@0.160.0/ 'sha256-UK9O+rbB3KhDsGQrE55qyNAJCpV7WHc47zV2U5f4bE4='; style-src 'self' 'sha256-ubBLf1l+jKbhR6hr5kXFYNklEpQm8ShDusrmAB+wrq4='; img-src 'self' data: blob:; connect-src 'self'; font-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#141c16">
@@ -135,7 +135,6 @@
       touch-action: none;
     }
     body.ready #view { opacity: 1; }
-    body[data-state="results"] #view { visibility: hidden; }
 
     .empty-note {
       position: fixed; z-index: 2; left: 50%; top: 42%;
@@ -196,6 +195,10 @@
     }
     .btn:hover { color: var(--cream); border-color: rgba(232, 168, 184, 0.55); background: rgba(232, 168, 184, 0.08); }
     .btn[aria-pressed="true"] { color: var(--deep); background: var(--mint); border-color: var(--mint); }
+    /* The sound switch says what it is doing in its words, and is not a lit button when it is on. */
+    #sound[aria-pressed="true"] { color: var(--slate); background: rgba(16, 22, 17, 0.62); border-color: var(--line); }
+    #sound[aria-pressed="true"]:hover { color: var(--cream); border-color: rgba(232, 168, 184, 0.55); background: rgba(232, 168, 184, 0.08); }
+    #sound[aria-pressed="false"] { color: var(--dim); }
     .btn.small { padding: 6px 10px; font-size: 12px; }
     .btn[disabled] { opacity: 0.45; cursor: default; }
     .text {
@@ -544,6 +547,11 @@
     .page-ink { position: absolute; left: 0; top: 0; pointer-events: none; }
     .page-paper { fill: var(--paper); }
     .page-lines { fill: none; stroke: var(--ink); stroke-linejoin: round; stroke-linecap: round; }
+    /* The page opens over the held frame: the paper comes down, and the panels one after another, the picture first. */
+    .results .page-ink { animation: paper-in 240ms ease-out both; }
+    .results .rp { animation: panel-in 420ms cubic-bezier(0.2, 0.85, 0.25, 1) both; animation-delay: calc(80ms + var(--i, 0) * 70ms); }
+    @keyframes paper-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes panel-in { from { opacity: 0; transform: scale(0.94) rotate(-0.6deg); } to { opacity: 1; transform: none; } }
     .rp {
       position: absolute; overflow: hidden;
       --padl: calc(var(--pg) * 0.9 + max(var(--lean-tl, 0px), var(--lean-bl, 0px)));
@@ -634,7 +642,7 @@
        --------------------------------------------------------------- */
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
-        animation-duration: 0.001ms !important; animation-iteration-count: 1 !important;
+        animation-duration: 0.001ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important;
         transition-duration: 0.001ms !important; scroll-behavior: auto !important;
       }
       .beat.on { opacity: 1; }

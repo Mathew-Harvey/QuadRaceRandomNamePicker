@@ -20,11 +20,20 @@
  *   actions the results page's four actions, a hostile name, and present mode:
  *           race again, draw again without the winners, edit names, and a
  *           name that is markup, which has to come out as text.
+ *   sound   the real audio graph, built in the page on an OfflineAudioContext
+ *           and played a scripted show, and the buffer read: silence before the
+ *           first cue, the ambers at their pitch, the green at its, the motors
+ *           at the pace of the race, a click at the line, the sting, and
+ *           silence after the motors stop. And the mute: kept, and obeyed.
  *   reduced a person who asked for less motion: the chip in place of the slap,
  *           a skip button that cannot be missed, and nothing that animates.
  *   reload  a reload in the middle of the lights loses the show and not the
  *           result: the draw is in the log, and replays from it.
  *   phone   the same, on a phone held upright.
+ *   photo   a kept draw whose first two cross the line 0.07 s apart, replayed
+ *           at the real speed: the beat, the last 0.8 s at a third of the
+ *           speed, and the winner still on the glass after the line, where
+ *           the flip is.
  *   bare    no WebGL, and no CDN: the draw is still made, sealed and shown.
  *
  * EVERY CAPTURE ASSERTS ITS STATE FIRST. On a software rasteriser a frame
@@ -71,8 +80,10 @@ import { crc32, deflateSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { openPage } from '../tests/lib/page.js';
 import {
-  fingerprint, parseReceipt, receiptFragment, receiptText,
+  fingerprint, parseReceipt, receiptFragment, receiptText, replayOf,
 } from '../src/draw.js';
+import { makePlan } from '../src/choreo.js';
+import { photoWindow } from '../src/show.js';
 
 const root = resolve(fileURLToPath(import.meta.url), '..', '..');
 
@@ -227,6 +238,21 @@ const shot = async (page, name, options) => {
   note(`picture ${name}.png`);
 };
 
+/*
+ * Where the first name's tag is, every frame, from now: the tag stands over its
+ * quad, so a quad that drops onto its block is a tag that comes down the glass.
+ * It is how a drop is seen from outside the page, since the fleet is in WebGL.
+ */
+const WATCH_TAG = `(() => {
+  window.__tag = [];
+  const frame = () => {
+    const t = document.querySelector('#hud-tags .tag:not([hidden])');
+    if (t) { window.__tag.push(t.getBoundingClientRect().top); }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+})()`;
+
 const text = (page, selector) => page.evaluate(`document.querySelector(${JSON.stringify(selector)})?.textContent ?? null`);
 const exists = (page, selector) => page.evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}))`);
 const state = (page) => page.evaluate('document.body.dataset.state');
@@ -276,10 +302,32 @@ function console12(label, page, { allow = null } = {}) {
 /* flow                                                                 */
 /* ------------------------------------------------------------------ */
 
+/*
+ * A spy on the audio the page makes, put in before the page's own scripts: it
+ * counts the stops of oscillators, which only the page's own tones make (the
+ * simulator's motors are started and never stopped), with how long each was
+ * for and when, and the times a parameter was scheduled, which the motors do
+ * every time they are updated. There is no speaker to listen to here, and
+ * this is the wiring seen from outside.
+ */
+const AUDIO_SPY = `(() => {
+  window.__audio = { voices: [], targets: 0 };
+  const stop = OscillatorNode.prototype.stop;
+  OscillatorNode.prototype.stop = function spy(when) {
+    window.__audio.voices.push({ at: performance.now(), seconds: when - this.context.currentTime });
+    return stop.call(this, when);
+  };
+  const target = AudioParam.prototype.setTargetAtTime;
+  AudioParam.prototype.setTargetAtTime = function spy(...args) {
+    window.__audio.targets += 1;
+    return target.apply(this, args);
+  };
+})();`;
+
 async function flow() {
   note(`${stamp()} flow: 50 names, four logos, a 30 second race at speed ${settings.speed}`);
   const dir = await mkdtemp(join(tmpdir(), 'picker-marks-'));
-  const page = await open({ width: 1600, height: 900 });
+  const page = await open({ width: 1600, height: 900, seed: [AUDIO_SPY] });
   try {
     await ready(page);
     check('11', 'the sheet is up and says what it needs', (await text(page, '#status')) === 'Add at least two names.' && await page.evaluate("document.getElementById('arm').disabled"), await text(page, '#status'));
@@ -314,7 +362,9 @@ async function flow() {
     /* Arm. The seal, on the glass, before anything else. */
     await page.evaluate("document.getElementById('event-title').focus()");
     await page.cdp.send('Input.insertText', { text: 'Friday night heat' }, page.sessionId);
+    check('11', 'no sound has been built before the first press, and the page is ready for one', (await page.evaluate('document.body.dataset.sound')) === 'ready');
     await page.click('#arm');
+    await page.until("document.body.dataset.sound === 'on'", 10000, 'sound running after the first press');
     await page.until("document.body.dataset.state === 'sealed' && !document.getElementById('hud-seal').hidden", 20000, 'the seal on the glass');
     const sealed = await text(page, '#hud-seal-print');
     const draws = await log(page);
@@ -399,6 +449,33 @@ async function flow() {
     check('11', 'the winner\'s time on the page is the time the clock stopped at', shown.first === last.clock || shown.first === (await text(page, '#hud-clock')), `${shown.first} against ${await text(page, '#hud-clock')}`);
     check('11', 'the winner\'s picture was drawn into its panel', shown.drawn && shown.shape === 'spread');
     check('11', 'the draw log still holds one draw, and the page issued no second receipt', (await log(page)).length === 1);
+
+    /*
+     * The sound, seen from outside: three short tones evenly spaced, a long one
+     * after the hold, the sting once, and the motors updated while the show ran
+     * and not after. The spacing is a ratio and not a number of seconds: the
+     * show's clock is clamped to a tenth of a second a frame, and a software
+     * rasteriser makes a frame a quarter of a second, so the lamps a second
+     * apart are two and a half apart on this wall clock.
+     */
+    const heard = await page.evaluate('window.__audio');
+    const ofLength = (lo, hi) => heard.voices.filter((v) => v.seconds >= lo && v.seconds <= hi);
+    const ambers = ofLength(0.155, 0.19);
+    const greens = ofLength(0.74, 0.8);
+    /* The sting's four notes stop at 0.13, 0.23, 0.33 and 0.94 s from when it is asked for, two voices each. */
+    const sting = [[0.115, 0.145], [0.215, 0.245], [0.315, 0.345], [0.92, 0.96]].flatMap(([lo, hi]) => ofLength(lo, hi));
+    const amberAt = [...new Set(ambers.map((v) => Math.round(v.at / 50)))].map((t) => t * 50).sort((a, b) => a - b);
+    const gaps = amberAt.slice(1).map((t, i) => t - amberAt[i]);
+    check('11', 'three amber tones, evenly spaced, one for each lamp', ambers.length === 6 && amberAt.length === 3 && Math.abs(gaps[0] / gaps[1] - 1) < 0.25, `${ambers.length} voices at ${amberAt.join(' ')}`);
+    const hold = greens.length ? greens[0].at - ambers[ambers.length - 1].at : -1;
+    const ratio = hold / gaps[1];
+    check('11', 'a long green tone after a hold of half to twice the spacing, which is half a second to two in lamp time', greens.length === 2 && ratio > 0.4 && ratio < 2.3, `${greens.length} voices, hold ${hold.toFixed(0)} ms, ${ratio.toFixed(2)} of a lamp gap`);
+    check('11', 'the winner\'s sting, once, after the race began', sting.length === 8 && sting.every((v) => v.at > greens[0].at + 1000), `${sting.length} voices`);
+    check('11', 'the motors were updated every frame of the show', heard.targets > 300, `${heard.targets} parameter changes`);
+    await page.sleep(700);
+    const settled = await page.evaluate('window.__audio.targets');
+    await page.sleep(700);
+    check('11', 'and not once the results were up: the page is silent', (await page.evaluate('window.__audio.targets')) === settled, `${settled}`);
 
     /* The receipt leaves the page two ways a person uses, and the policy must let both through. */
     const downloads = await mkdtemp(join(tmpdir(), 'picker-dl-'));
@@ -485,7 +562,12 @@ async function sheet() {
   const page = await open({ width: 1440, height: 900 });
   try {
     await ready(page);
+    await page.evaluate(WATCH_TAG);
     await paste(page, 'Sam, Ana, Raj, Mia');
+    await page.until('window.__tag.length >= 14', 40000, 'a dozen frames of the first name\'s tag');
+    const dropped = await page.evaluate('window.__tag');
+    const settled = dropped.slice(-3);
+    check('sheet', 'a name typed drops its quad onto the block: its tag comes down the glass, and then stays', dropped[0] < dropped.at(-1) - 25 && Math.max(...settled) - Math.min(...settled) < 2, `first ${dropped[0].toFixed(0)}, last ${dropped.at(-1).toFixed(0)}, over ${dropped.length} frames`);
     await page.until("!document.getElementById('split-offer').hidden", 5000, 'the offer to split a comma list');
     await shot(page, 's1-split-offer');
     await page.click('#split-yes');
@@ -585,6 +667,12 @@ async function actions() {
     }))()`);
     check('actions', 'a name that is markup comes out as text: nothing ran, nothing was made', rendered.title === 'WebFPV Race Name Picker' && rendered.images === 0 && rendered.scripts === 0 && hostile.every((h) => rendered.names.includes(h)), JSON.stringify(rendered.names));
     check('actions', 'two winners have two panels, and not three', rendered.second && !rendered.third);
+    /* The page opens: a panel at a time, the picture first. The delay is in the stylesheet, and a computed delay is what the browser is doing. */
+    const opening = await page.evaluate(`['big', 'second', 'order', 'seal', 'actions'].map((n) => {
+      const el = document.querySelector('#results [data-panel=' + n + ']');
+      return { n, delay: parseFloat(getComputedStyle(el).animationDelay), name: getComputedStyle(el).animationName };
+    })`);
+    check('actions', 'the page opens a panel at a time, the picture first', opening.every((o) => o.name === 'panel-in') && opening.every((o, i) => i === 0 || o.delay > opening[i - 1].delay), JSON.stringify(opening));
     await shot(page, 'a1-two-winners');
 
     /* Draw again without the winners: the lines come out, and a new draw is sealed at once. */
@@ -634,6 +722,114 @@ async function actions() {
   }
 }
 
+
+/* ------------------------------------------------------------------ */
+/* sound                                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Run in the page: the picker's own sound module on an offline context, a
+ * scripted show scheduled into it, the rendered buffer analysed. The analysis
+ * is a Goertzel filter, which is the one frequency's worth of a Fourier
+ * transform and is a few lines long, over windows between cues.
+ */
+const PROBE = `(async () => {
+  const { createSound, TONES } = await import('./src/sound.js');
+  const rate = 44100;
+  const ctx = new OfflineAudioContext(1, rate * 9, rate);
+  const sound = createSound({ context: ctx });
+  sound.unlock();
+  sound.tone('amber', 0.5);
+  sound.tone('green', 1.5);
+  sound.motors({ rpm: 4200, speed: 0 }, 3.0);
+  sound.motors({ rpm: 8600, speed: 30 }, 5.0);
+  sound.gate(5.6);
+  sound.sting(6.2);
+  sound.hush(7.4);
+  const buffer = await ctx.startRendering();
+  const x = buffer.getChannelData(0);
+  const win = (a, b) => x.subarray(Math.floor(a * rate), Math.floor(b * rate));
+  const rms = (w) => { let s = 0; for (let i = 0; i < w.length; i += 1) s += w[i] * w[i]; return Math.sqrt(s / w.length); };
+  const goertzel = (w, hz) => {
+    const k = 2 * Math.cos((2 * Math.PI * hz) / rate);
+    let s1 = 0; let s2 = 0;
+    for (let i = 0; i < w.length; i += 1) { const s0 = w[i] + k * s1 - s2; s2 = s1; s1 = s0; }
+    return Math.sqrt(s1 * s1 + s2 * s2 - k * s1 * s2) / w.length;
+  };
+  const band = (w, lo, hi, step = 2) => { let best = 0; for (let hz = lo; hz <= hi; hz += step) best = Math.max(best, goertzel(w, hz)); return best; };
+  /* Energy in what is left when the slow part is taken away: a click lives up there and a motor does not. */
+  const sharp = (w) => { let s = 0; for (let i = 1; i < w.length; i += 1) { const d = w[i] - w[i - 1]; s += d * d; } return Math.sqrt(s / w.length); };
+  let peak = 0;
+  for (let i = 0; i < x.length; i += 1) { const a = Math.abs(x[i]); if (a > peak) peak = a; }
+  return {
+    before: rms(win(0, 0.45)),
+    amber: { rms: rms(win(0.52, 0.62)), at880: goertzel(win(0.52, 0.62), TONES.amber.hz), at1320: goertzel(win(0.52, 0.62), TONES.green.hz) },
+    gap: rms(win(0.9, 1.4)),
+    green: { rms: rms(win(1.6, 2.1)), at880: goertzel(win(1.6, 2.1), TONES.amber.hz), at1320: goertzel(win(1.6, 2.1), TONES.green.hz) },
+    quiet: rms(win(2.4, 2.9)),
+    low: { rms: rms(win(3.6, 4.6)), peak: band(win(3.6, 4.6), 195, 225), off: band(win(3.6, 4.6), 285, 315) },
+    high: { rms: rms(win(5.1, 5.5)), peak: band(win(5.1, 5.5), 415, 450), lowBand: band(win(5.1, 5.5), 195, 225) },
+    click: { during: sharp(win(5.6, 5.66)), before: sharp(win(5.4, 5.46)) },
+    sting: { late: goertzel(win(6.6, 7.0), 1046.5), other: goertzel(win(6.6, 7.0), 1300) },
+    after: rms(win(8.2, 8.9)),
+    peak,
+    muted: await (async () => {
+      const off = new OfflineAudioContext(1, rate * 2, rate);
+      const quiet = createSound({ context: off, muted: true });
+      quiet.unlock();
+      quiet.tone('amber', 0.2);
+      quiet.tone('green', 0.6);
+      quiet.motors({ rpm: 6000, speed: 20 }, 0.1);
+      quiet.gate(1.0);
+      quiet.sting(1.2);
+      const b = await off.startRendering();
+      let p = 0; const d = b.getChannelData(0);
+      for (let i = 0; i < d.length; i += 1) { const a = Math.abs(d[i]); if (a > p) p = a; }
+      return { peak: p, state: quiet.state };
+    })(),
+  };
+})()`;
+
+async function sound() {
+  note(`${stamp()} sound`);
+  const page = await open({ width: 1280, height: 800 });
+  try {
+    await ready(page);
+    const r = await page.evaluate(PROBE);
+    check('sound', 'nothing sounds before the first cue', r.before < 1e-4, `rms ${r.before}`);
+    check('sound', 'an amber tone is at 880 Hz and not at the green\'s pitch', r.amber.rms > 0.02 && r.amber.at880 > 8 * r.amber.at1320, JSON.stringify(r.amber));
+    check('sound', 'and the gap after it is quiet', r.gap < 1e-3, `rms ${r.gap}`);
+    check('sound', 'the green is at 1320 Hz and a long one', r.green.rms > 0.02 && r.green.at1320 > 8 * r.green.at880, JSON.stringify(r.green));
+    check('sound', 'then quiet until the motors are asked for', r.quiet < 1e-3, `rms ${r.quiet}`);
+    check('sound', 'motors at 4200 rpm sing at their blade pass, 210 Hz', r.low.rms > 0.003 && r.low.peak > 4 * r.low.off, JSON.stringify(r.low));
+    check('sound', 'and at 8600 rpm they sing an octave higher, near 430 Hz, with the low note gone', r.high.rms > 0.003 && r.high.peak > 3 * r.high.lowBand, JSON.stringify(r.high));
+    check('sound', 'a gate click at the line is sharper than the motors under it', r.click.during > 2.5 * r.click.before, JSON.stringify(r.click));
+    check('sound', 'the sting ends on its held top note', r.sting.late > 3 * r.sting.other, JSON.stringify(r.sting));
+    check('sound', 'the motors fade to nothing after they are stopped', r.after < 1e-3, `rms ${r.after}`);
+    check('sound', 'and the whole show never clips', r.peak > 0.05 && r.peak < 0.98, `peak ${r.peak}`);
+    check('sound', 'a muted sound renders silence, whatever it is asked for', r.muted.peak < 1e-6 && r.muted.state === 'muted', JSON.stringify(r.muted));
+
+    /* The live page: a switch, a preference that is kept, and no sound until a gesture. */
+    check('sound', 'before any gesture the page has built no sound, and says it is ready for one', (await page.evaluate('document.body.dataset.sound')) === 'ready');
+    check('sound', 'the switch is there and says sound is on', (await text(page, '#sound')) === 'Sound on' && !(await page.evaluate("document.getElementById('sound').hidden")));
+    await page.click('#sound');
+    await page.until("document.body.dataset.sound === 'muted'", 5000, 'the page to say muted');
+    check('sound', 'pressing it mutes, and says so in words', (await text(page, '#sound')) === 'Sound off' && (await page.evaluate("document.getElementById('sound').getAttribute('aria-pressed')")) === 'false');
+    check('sound', 'and the mute is kept in this browser', (await page.evaluate("localStorage.getItem('webfpv-picker/v1/sound')")) === '"off"');
+    await page.click('#sound');
+    await page.until("document.body.dataset.sound === 'on'", 10000, 'the page to say on');
+    check('sound', 'pressing it again turns it on, which is a gesture, so the context is running', (await text(page, '#sound')) === 'Sound on');
+    await page.click('#sound');
+    await page.evaluate('location.reload()');
+    await page.sleep(500);
+    await ready(page);
+    check('sound', 'a mute survives a reload, and the page comes up muted', (await text(page, '#sound')) === 'Sound off' && (await page.evaluate('document.body.dataset.sound')) === 'muted');
+    console12('sound', page);
+  } finally {
+    await page.close();
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* reduced                                                              */
 /* ------------------------------------------------------------------ */
@@ -643,8 +839,12 @@ async function reduced() {
   const page = await open({ width: 1280, height: 800, reducedMotion: true });
   try {
     await ready(page);
+    await page.evaluate(WATCH_TAG);
     await paste(page, namesFor(10).join('\n'));
     await page.until("document.getElementById('count').textContent === '10 of 50'", 5000, 'ten names');
+    await page.until('window.__tag.length >= 10', 40000, 'ten frames of the first name\'s tag');
+    const still = await page.evaluate('window.__tag');
+    check('reduced', 'a name typed is a quad on its block at once: nothing drops', Math.max(...still) - Math.min(...still) < 2, `${Math.min(...still).toFixed(1)} to ${Math.max(...still).toFixed(1)} over ${still.length} frames`);
     await page.click('#arm');
     await page.until("document.body.dataset.state === 'sealed' && !document.getElementById('hud-chip').hidden", 20000, 'the chip, in place');
     check('reduced', 'the seal is a chip in the corner at once, and no slap on the glass', await page.evaluate("document.getElementById('hud-seal').hidden"));
@@ -698,6 +898,20 @@ async function reload() {
     check('reload', 'and it wrote nothing', (await log(page)).length === 1);
     await page.evaluate("[...document.querySelectorAll('#results .btn')].find((b) => b.textContent.startsWith('Edit names')).click()");
     await page.until("document.body.dataset.state === 'setup'", 15000, 'the sheet');
+    await sheetIn(page);
+    /* A replay started with nothing typed on the sheet: "Type names to fill the grid" belongs to the sheet, and was once left standing across the middle of a race. */
+    await page.evaluate("const n = document.getElementById('names'); n.value = ''; n.dispatchEvent(new Event('input', { bubbles: true }))");
+    await page.until("document.getElementById('count').textContent === '0 of 50'", 5000, 'an empty sheet');
+    check('reload', 'an empty sheet says to type names', await page.evaluate("!document.getElementById('empty-note').hidden"));
+    await page.evaluate("document.getElementById('log-box').open = true");
+    await page.click('#log .acts button');
+    await page.until("document.body.dataset.state === 'lights'", 60000, 'the lights of a replay from an empty sheet');
+    check('reload', 'and a replay started from it does not leave that note over the race', await page.evaluate("document.getElementById('empty-note').hidden"));
+    await page.until("!document.getElementById('hud-skip').hidden", 10000, 'the skip button');
+    await page.click('#hud-skip');
+    await page.until("document.body.dataset.state === 'results'", 30000, 'the results of that replay');
+    await page.evaluate("[...document.querySelectorAll('#results .btn')].find((b) => b.textContent.startsWith('Edit names')).click()");
+    await page.until("document.body.dataset.state === 'setup'", 15000, 'the sheet again');
     await sheetIn(page);
     const controls = await page.evaluate("[...document.querySelectorAll('#log .acts > *')].map((n) => n.textContent).join('|')");
     check('reload', 'each draw in the log can be replayed, verified, copied and saved', controls === 'Replay|Verify|Copy receipt|Save', controls);
@@ -793,9 +1007,108 @@ async function bare() {
 }
 
 /* ------------------------------------------------------------------ */
+/* photo                                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Every frame, from outside the page: the clock, the beat, the state, and
+ * where each tag that is showing stands. The tags are how a quad is seen from
+ * outside, since the fleet is in WebGL, and a tag that is on the glass is a
+ * quad that is.
+ */
+const SAMPLER = `(() => {
+  window.__s = [];
+  const frame = () => {
+    const c = document.getElementById('hud-clock').textContent.split(':');
+    const tags = [...document.querySelectorAll('#hud-tags .tag:not([hidden])')].map((t) => {
+      const r = t.getBoundingClientRect();
+      return { name: t.querySelector('span').textContent, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    window.__s.push({
+      at: performance.now(),
+      clock: Number(c[0]) * 60 + Number(c[1]),
+      beat: document.getElementById('hud-beat').textContent,
+      state: document.body.dataset.state,
+      tags,
+    });
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+})()`;
+
+/*
+ * A kept draw whose first two cross the line 0.07 s apart (tests/lib/
+ * photo-finish.json, found by a search over seeds; it is a receipt in the log,
+ * which the page replays and never issues). It shows what only a finish like
+ * that shows, the last 0.8 s before the line at a third of the speed with the
+ * beat that says so, and what every finish should show: the winner is still on
+ * the glass after the line, which is where the flip is. It was a flip nobody
+ * saw, because the rail's frame ended a few metres after the line.
+ */
+async function photo() {
+  note(`${stamp()} photo finish: a kept draw whose first two cross 0.07 s apart`);
+  const receipt = JSON.parse(await readFile(join(root, 'tests', 'lib', 'photo-finish.json'), 'utf8'));
+  const derived = await replayOf(receipt);
+  const plan = makePlan({ order: derived.order, showSeed: derived.showSeed, length: receipt.length });
+  const slow = photoWindow(plan);
+  check('photo', 'the draw in the log is a photo finish, with a window for the slow motion', Boolean(slow), JSON.stringify(slow));
+  const winner = receipt.names[derived.order[0]];
+  const entry = JSON.stringify(JSON.stringify([receipt]));
+  const page = await open({
+    width: 1280, height: 720, query: { speed: '1' }, seed: [`localStorage.setItem('webfpv-picker/v1/log', ${entry});`],
+  });
+  try {
+    await ready(page);
+    await page.evaluate(SAMPLER);
+    await page.evaluate("document.getElementById('log-box').open = true");
+    await page.click('#log .acts button');
+    await page.until("document.body.dataset.state === 'finish'", 240000, 'the finish');
+    await shot(page, 'ph1-finish');
+    await page.until("document.body.dataset.state === 'results'", 60000, 'the results');
+    const samples = await page.evaluate('window.__s');
+    const beats = [];
+    for (const s of samples) {
+      if (s.beat && beats.at(-1) !== s.beat) {
+        beats.push(s.beat);
+      }
+    }
+    check('photo', 'the beats say Photo finish, and then name the winner', beats.includes('Photo finish') && beats.indexOf(`${winner} wins`) > beats.indexOf('Photo finish'), beats.join(' | '));
+    const steps = [];
+    for (let i = 1; i < samples.length; i += 1) {
+      const a = samples[i - 1];
+      const b = samples[i];
+      if (a.state === 'race' && b.state === 'race' && b.clock > a.clock) {
+        steps.push({ at: b.clock, d: b.clock - a.clock });
+      }
+    }
+    const mean = (xs) => xs.reduce((sum, x) => sum + x, 0) / Math.max(1, xs.length);
+    const before = steps.filter((s) => s.at > 15 && s.at < slow.from - 0.2).map((s) => s.d);
+    const inside = steps.filter((s) => s.at > slow.from + 0.1 && s.at < slow.to - 0.1).map((s) => s.d);
+    const ratio = mean(inside) / mean(before);
+    check('photo', 'the last 0.8 s before the line runs at about a third of the speed', inside.length >= 12 && ratio > 0.25 && ratio < 0.42, `${inside.length} frames inside the window, ${before.length} before it, ratio ${ratio.toFixed(2)}`);
+    /* Race seconds, which the page's clock stops counting at the line: a frame is worth the time since the last, no more than the tenth of a second the page clamps it to. */
+    const after = samples.filter((s) => s.state === 'finish');
+    let seen = 0;
+    let frames = 0;
+    for (let i = 1; i < after.length; i += 1) {
+      if (after[i].tags.some((t) => t.name === winner && t.x > 0 && t.x < 1280)) {
+        seen += Math.min(0.1, (after[i].at - after[i - 1].at) / 1000);
+        frames += 1;
+      }
+    }
+    note(`the last 0.8 s ran at ${ratio.toFixed(2)} of the speed over ${inside.length} frames; the winner's tag stood on the glass for ${seen.toFixed(2)} s of race time after the line, ${frames} of ${after.length} frames`);
+    /* Measured both ways: 1.04 s with the rail turned to the line and 0.48 s with it looking abeam of where it parked (the tag of a top three quad stands where its quad is, and a quad has gone before its tag does). */
+    check('photo', 'the winner is on the glass for three quarters of a second after the line, which is where the flip is', seen >= 0.75, `${seen.toFixed(2)} s`);
+    console12('photo', page);
+  } finally {
+    await page.close();
+  }
+}
+
+/* ------------------------------------------------------------------ */
 
 const SCENARIOS = {
-  flow, sheet, actions, reduced, reload, phone, bare,
+  flow, sheet, actions, sound, reduced, reload, phone, bare, photo,
 };
 
 async function main() {

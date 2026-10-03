@@ -33,10 +33,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GRID, makeCourse } from '../src/course.js';
-import { makePlan } from '../src/choreo.js';
+import { FLIP, makePlan } from '../src/choreo.js';
 import {
-  AERIAL_FOV, HERO_AFTER, HERO_DISTANCE, HERO_FLOOR, HERO_FOV, HERO_RISE, OPEN_FOV, RAIL_FOV, fovFor, makeShots,
+  AERIAL_FOV, CALM_FOV, CALM_YAW, FIRST_LAMP_K, HERO_AFTER, HERO_DISTANCE, HERO_FLOOR, HERO_FOV, HERO_RISE, OPEN_FOV, RAIL_FOV, fovFor, makeShots,
 } from '../src/camera.js';
+import { LIGHTS } from '../src/show.js';
 import { FLEET_SCALE } from '../src/layout.js';
 import { orderFor } from './lib/plan-cases.js';
 
@@ -163,6 +164,50 @@ test('the camera never crosses the line, and stops short of it square to the fin
   }
 });
 
+test('the finish frame: the rail parks looking at the line, and the winner stays in frame for the flip', () => {
+  const view = {};
+  const held = {};
+  const pose = {};
+  for (const { plan } of PLANS) {
+    /* Parked, the rail's frame is the held frame, and the line is in the middle of it. */
+    shots.rail(plan, plan.duration, view);
+    shots.held(plan, held);
+    for (const k of ['x', 'y', 'z', 'tx', 'ty', 'tz', 'fov']) {
+      assert.ok(Math.abs(view[k] - held[k]) < 0.1, `parked, the rail's ${k} is ${view[k]} and the held frame's is ${held[k]}`);
+    }
+    const line = course.place(plan.laps * course.lap, 0, 1.4, {});
+    const yaw = Math.atan2(view.ty - view.y, view.tx - view.x);
+    const bearing = (wrap(Math.atan2(line.y - view.y, line.x - view.x) - yaw) * 180) / Math.PI;
+    assert.ok(Math.abs(bearing) < 1, `the line is ${bearing.toFixed(1)} degrees from the middle of the parked frame`);
+  }
+  /*
+   * How long after the line the winner is in frame. Before the rail turned to
+   * the line this was 0.08 to 0.35 s on a wide window, in a flip that takes
+   * FLIP seconds: nobody saw it. The numbers below are measured over nine
+   * plans, with a margin, and are held from getting worse. A phone held
+   * upright has a narrower frame and sees less of it, which is said.
+   */
+  for (const [aspect, least] of [[16 / 9, 0.4], [9 / 16, 0.25]]) {
+    const seen = [];
+    for (const { plan } of PLANS) {
+      const winner = plan.order[0];
+      const crossed = plan.finish[winner];
+      let t = crossed;
+      for (; t < crossed + FLIP; t += 0.005) {
+        shots.rail(plan, t, view, false, aspect);
+        plan.pose(winner, t, pose);
+        if (!inFrame(view, pose, aspect)) {
+          break;
+        }
+      }
+      seen.push(t - crossed);
+    }
+    seen.sort((a, b) => a - b);
+    console.log(`camera: after the line the winner is in frame for ${seen[0].toFixed(2)} s at the least and ${seen[4].toFixed(2)} s median, of a ${FLIP} s flip, at aspect ${aspect.toFixed(2)}`);
+    assert.ok(seen[0] >= least, `the winner is out of frame ${seen[0]} s after the line at aspect ${aspect}`);
+  }
+});
+
 test('the pack crosses the frame left to right, on the straights and in the bends', () => {
   const view = {};
   const pose = {};
@@ -249,4 +294,116 @@ test('the winner\'s picture is aimed at the winner, from the infield, a fixed wa
     const again = shots.hero(plan, t, {});
     assert.deepEqual(again, view);
   }
+});
+
+/* Whether a point is inside a shot's frame, at an aspect, with a margin in degrees. */
+function inFrame(view, point, aspect, margin = 0) {
+  const yaw = Math.atan2(view.ty - view.y, view.tx - view.x);
+  const flatView = Math.hypot(view.tx - view.x, view.ty - view.y);
+  const bearing = wrap(Math.atan2(point.y - view.y, point.x - view.x) - yaw);
+  const elevation = Math.atan2(point.z - view.z, Math.hypot(point.x - view.x, point.y - view.y)) - Math.atan2(view.tz - view.z, flatView);
+  const vertical = (fovFor(view.fov, aspect) * Math.PI) / 180;
+  const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * aspect);
+  const m = (margin * Math.PI) / 180;
+  return Math.abs(bearing) <= horizontal / 2 - m && Math.abs(elevation) <= vertical / 2 - m;
+}
+
+test('the lamps are in frame from the first amber to green, on a wide window and on a phone', () => {
+  /* FIRST_LAMP_K is the earliest the first lamp can be lit in the run of the lights, which show.js says, and the lamps stand in the gantry's header over the line. */
+  assert.ok(FIRST_LAMP_K >= LIGHTS.first / (LIGHTS.first + 2 * LIGHTS.step + LIGHTS.holdMax) - 1e-9, `${FIRST_LAMP_K} is before the earliest first lamp`);
+  const lamps = course.place(0, 0, 5.82, {});
+  const view = {};
+  for (const { plan } of PLANS) {
+    for (const aspect of [16 / 9, 9 / 16]) {
+      let worst = 0;
+      for (let k = FIRST_LAMP_K; k <= 1; k += 1 / 200) {
+        shots.aerial(k, plan, view);
+        if (!inFrame(view, lamps, aspect, 2)) {
+          worst += 1;
+        }
+      }
+      assert.equal(worst, 0, `the lamps leave the frame in ${worst} of the last 60 per cent of the descent at aspect ${aspect.toFixed(2)}`);
+    }
+  }
+});
+
+test('the whole of the oval is in the first frame of the aerial, and the line is not in the dead middle of the rail\'s first', () => {
+  const { plan } = PLANS[3];
+  const view = {};
+  shots.aerial(0, plan, view);
+  /* The four ends of the oval's long axis, at the ground: the boards stand just outside them. */
+  const ends = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  const extent = Math.max(...Array.from({ length: 360 }, (_, i) => Math.hypot(course.place((i * course.lap) / 360, 0, 0, {}).x, 0)));
+  assert.ok(extent > 30);
+  for (const [dx, dy] of ends) {
+    const probe = { x: dx * extent * 0.5, y: dy * extent * 0.35, z: 0 };
+    assert.ok(inFrame(view, probe, 16 / 9), `${dx},${dy} is outside the first aerial frame`);
+  }
+  /* At the start of the race the gantry's near upright, which stands at the line, is well to the right of the middle: not a pole through it. */
+  const first = shots.rail(plan, 0, {});
+  const eyeAt = { x: first.x, y: first.y };
+  const posts = [-7, 7].map((u) => course.place(0, u, 3, {}));
+  const near = posts.sort((a, b) => Math.hypot(a.x - eyeAt.x, a.y - eyeAt.y) - Math.hypot(b.x - eyeAt.x, b.y - eyeAt.y))[0];
+  const yaw = Math.atan2(first.ty - first.y, first.tx - first.x);
+  const bearing = (wrap(Math.atan2(near.y - first.y, near.x - first.x) - yaw) * 180) / Math.PI;
+  /* The pack crosses left to right, so a line that is ahead of the aim is to its right, which is a bearing that is negative of the line of sight turned clockwise. */
+  assert.ok(Math.abs(bearing) >= 10, `the near upright is ${bearing.toFixed(1)} degrees from the middle of the rail's first frame`);
+});
+
+test('the calm rail turns slowly, cuts instead of gliding, and keeps the leader in frame: on a wide window and on a phone', () => {
+  const view = {};
+  const pose = {};
+  const rank = [];
+  const stopShort = shots.stopShort;
+  for (const aspect of [16 / 9, 9 / 16]) {
+    let worstYaw = 0;
+    let mostCuts = 0;
+    let out = 0;
+    let frames = 0;
+    for (const { plan } of PLANS) {
+      const cuts = shots.calmCuts(plan, aspect);
+      const lastCut = new Set(cuts.map((c) => Math.round(c * 120)));
+      mostCuts = Math.max(mostCuts, cuts.length / plan.laps);
+      const winner = Math.min(...plan.finish);
+      let previous = null;
+      let lastS = -Infinity;
+      for (let t = 0; t <= plan.duration; t += 1 / 120) {
+        shots.rail(plan, t, view, true, aspect);
+        assert.equal(view.fov, CALM_FOV, 'the calm rail is one wide lens, with no opening zoom');
+        const yaw = Math.atan2(view.ty - view.y, view.tx - view.x);
+        const s = shots.railS(plan, t, true, aspect);
+        assert.ok(s >= lastS - 1e-9, 'the calm rail never goes backwards either');
+        assert.ok(s <= plan.laps * course.lap - stopShort + 1e-6, 'and never crosses the line');
+        lastS = s;
+        /* A frame on which the camera was put somewhere else is a cut, and a cut is not a turn. */
+        const cutHere = [-1, 0, 1].some((d) => lastCut.has(Math.round(t * 120) + d));
+        if (previous !== null && !cutHere) {
+          worstYaw = Math.max(worstYaw, (Math.abs(wrap(yaw - previous)) * 120 * 180) / Math.PI);
+        }
+        previous = yaw;
+        if (t >= 1.7 && t <= winner) {
+          const lead = plan.rank(t, rank)[0];
+          plan.pose(lead, t, pose);
+          frames += 1;
+          if (!inFrame(view, pose, aspect)) {
+            out += 1;
+          }
+        }
+      }
+    }
+    console.log(`camera: the calm rail at aspect ${aspect.toFixed(2)} turns at most ${worstYaw.toFixed(1)} degrees a second between cuts, cuts at most ${mostCuts.toFixed(1)} times a lap, and loses the leader in ${out} of ${frames} frames`);
+    assert.ok(worstYaw <= CALM_YAW + 3, `the calm rail turns ${worstYaw} degrees a second`);
+    assert.equal(out, 0, `the calm rail loses the leader in ${out} of ${frames} frames at aspect ${aspect}`);
+    assert.ok(mostCuts <= (aspect > 1 ? 9 : 20), `${mostCuts} cuts a lap at aspect ${aspect}`);
+  }
+});
+
+test('the calm rail is the same race rail with its own table, and the race rail is untouched by it', () => {
+  const { plan } = PLANS[4];
+  const before = shots.rail(plan, 7.3, {});
+  shots.rail(plan, 7.3, {}, true, 16 / 9);
+  shots.rail(plan, 7.3, {}, true, 9 / 16);
+  const after = shots.rail(plan, 7.3, {});
+  assert.deepEqual(after, before, 'asking for the calm rail does not change the race rail');
+  assert.notDeepEqual(shots.rail(plan, 7.3, {}, true, 16 / 9).fov, before.fov, 'and they are different lenses');
 });

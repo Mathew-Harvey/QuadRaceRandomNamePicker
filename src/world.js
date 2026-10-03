@@ -209,6 +209,7 @@ export async function buildWorld({
    *   plan    from makePlan, or null on the grid
    *   count   how many quads are on the grid
    *   spin, dt, discs, wall   see fleet.place; wall is the cosmetic clock the flags and clouds run on
+   *   calm    no quad drops onto its block or lifts off it (reduced motion)
    *   lamps   [amber lit, green lit]
    *   offset  { W, H, dx, dy, fov } puts the picture's middle dx and dy pixels from the
    *           middle of the window, as a view offset does (the results page's way of
@@ -216,10 +217,11 @@ export async function buildWorld({
    *           with fov as the vertical field of the whole window; null for none
    */
   function frame({
-    shot = 'paddock', t = 0, k = 0, plan = null, count = fleet.count, spin = 0, dt = 0, discs = 0.14, wall = 0, lamps = null,
-    offset = null,
+    shot = 'paddock', t = 0, k = 0, plan = null, count = fleet.target, spin = 0, dt = 0, discs = 0.14, wall = 0, lamps = null,
+    offset = null, calm = false,
   }) {
-    if (count !== fleet.count) {
+    fleet.setCalm(calm);
+    if (count !== fleet.target) {
       fleet.setCount(count);
       fleet.setLiveries(count);
       grid.setCount(count);
@@ -240,7 +242,7 @@ export async function buildWorld({
     } else if (shot === 'hero') {
       shots.hero(plan, t, view);
     } else {
-      shots.rail(plan, t, view);
+      shots.rail(plan, t, view, calm, camera.aspect);
     }
     point({ x: view.x, y: view.y, z: view.z }, eye);
     point({ x: view.tx, y: view.ty, z: view.tz }, target);
