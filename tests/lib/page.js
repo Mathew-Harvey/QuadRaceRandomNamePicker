@@ -363,9 +363,9 @@ export async function openPage({
     }
   }
 
-  /* A PNG of the page, written to a path. */
-  async function screenshot(path) {
-    const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId);
+  /* A PNG of the page, written to a path; `clip` is { x, y, width, height, scale } for a closer look at one part of it. */
+  async function screenshot(path, { clip = null } = {}) {
+    const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { scale: 1, ...clip } } : {}) }, sessionId);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, Buffer.from(data, 'base64'));
     return path;

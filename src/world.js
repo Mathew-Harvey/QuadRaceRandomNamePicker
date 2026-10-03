@@ -67,6 +67,7 @@ import { buildGrid } from './grid.js';
 import { buildFleet } from './fleet.js';
 import { makeShots, fovFor } from './camera.js';
 import { toThree } from './frame.js';
+import { pixelOf } from './lens.js';
 
 function yieldToPaint() {
   const frames = new Promise((resolve) => {
@@ -167,6 +168,7 @@ export async function buildWorld({
   const target = new THREE.Vector3();
   const focus = new THREE.Vector3();
   const here = {};
+  const probe = new THREE.Vector3();
 
   /* The plan frame to a Three vector, lifted by the ground. */
   const point = (p, out) => {
@@ -181,18 +183,41 @@ export async function buildWorld({
   }
 
   /*
+   * Where a point of the plan's frame is on the glass, in CSS pixels of the
+   * canvas, as the last frame drew it: through the camera, and then through
+   * the grade pass's bend, which a tag laid over a quad has to follow or it
+   * floats beside it. `behind` is true for a point that is not in front of
+   * the camera, whose x and y mean nothing.
+   */
+  function screenOf(x, y, z, out = {}) {
+    toThree(x, y, z, here);
+    probe.set(here.x, here.y + groundY, here.z).applyMatrix4(camera.matrixWorldInverse);
+    out.behind = !(probe.z < -camera.near);
+    out.depth = -probe.z;
+    probe.applyMatrix4(camera.projectionMatrix);
+    const canvasEl = renderer.domElement;
+    pixelOf(probe.x, probe.y, canvasEl.clientWidth, canvasEl.clientHeight, post.grade.uniforms.uDistort.value, out);
+    return out;
+  }
+
+  /*
    * Put the camera where a shot says, and draw.
    *
-   *   shot    'paddock' | 'aerial' | 'rail' | 'held'
+   *   shot    'paddock' | 'aerial' | 'rail' | 'held' | 'hero'
    *   t       race clock, seconds; the paddock's orbit clock for 'paddock'
    *   k       0 to 1 along the aerial
    *   plan    from makePlan, or null on the grid
    *   count   how many quads are on the grid
    *   spin, dt, discs, wall   see fleet.place; wall is the cosmetic clock the flags and clouds run on
    *   lamps   [amber lit, green lit]
+   *   offset  { W, H, dx, dy, fov } puts the picture's middle dx and dy pixels from the
+   *           middle of the window, as a view offset does (the results page's way of
+   *           putting the winner in a panel that is not the middle of the window),
+   *           with fov as the vertical field of the whole window; null for none
    */
   function frame({
     shot = 'paddock', t = 0, k = 0, plan = null, count = fleet.count, spin = 0, dt = 0, discs = 0.14, wall = 0, lamps = null,
+    offset = null,
   }) {
     if (count !== fleet.count) {
       fleet.setCount(count);
@@ -200,7 +225,7 @@ export async function buildWorld({
       grid.setCount(count);
     }
     /* The paddock's and the aerial's clocks are not the race's: the quads are on their blocks until the race shot says go. */
-    const racing = Boolean(plan) && (shot === 'rail' || shot === 'held');
+    const racing = Boolean(plan) && (shot === 'rail' || shot === 'held' || shot === 'hero');
     fleet.place({ plan: racing ? plan : null, t: racing ? t : -1, spin, dt, discs });
     if (lamps) {
       gantry.setLamps(lamps[0], lamps[1]);
@@ -212,6 +237,8 @@ export async function buildWorld({
       shots.aerial(k, plan, view);
     } else if (shot === 'held') {
       shots.held(plan, view);
+    } else if (shot === 'hero') {
+      shots.hero(plan, t, view);
     } else {
       shots.rail(plan, t, view);
     }
@@ -220,10 +247,15 @@ export async function buildWorld({
     camera.position.copy(eye);
     camera.up.set(0, 1, 0);
     camera.lookAt(target);
-    const fov = fovFor(view.fov, camera.aspect);
+    const fov = offset && offset.fov ? offset.fov : fovFor(view.fov, camera.aspect);
     if (Math.abs(camera.fov - fov) > 0.01) {
       camera.fov = fov;
       camera.updateProjectionMatrix();
+    }
+    if (offset) {
+      camera.setViewOffset(offset.W, offset.H, offset.dx, offset.dy, offset.W, offset.H);
+    } else if (camera.view && camera.view.enabled) {
+      camera.clearViewOffset();
     }
 
     /* The sun's shadow box follows what is looked at. */
@@ -247,6 +279,10 @@ export async function buildWorld({
   return {
     shell, renderer, camera, map, post, course, simCourse, quality, rig, groundY,
     gantry, boards, grid, fleet, shots,
-    resize, frame, dispose,
+    resize, frame, screenOf, dispose,
+    /* The grade pass's own number, for the page's lens arithmetic. */
+    get distort() {
+      return post.grade.uniforms.uDistort.value;
+    },
   };
 }

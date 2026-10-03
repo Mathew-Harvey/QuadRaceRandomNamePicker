@@ -25,8 +25,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ORDINARY_RANDOM, WEB_CRYPTO, domTouches, importsIn, leadingComment, linesMatching, moduleSpecifiers, stripComments, urlProblems,
+  LIVE_DRAW_IMPORTS, ORDINARY_RANDOM, WEB_CRYPTO, domTouches, drawImports, idsAskedFor, importsIn, leadingComment, linesMatching,
+  markupOnly, moduleSpecifiers, stripComments, urlProblems,
 } from '../scripts/lint.js';
+import { CDN, PAGES, policyFor, statedPolicy, withPolicy } from '../scripts/csp.js';
 
 /* The things the rules look for, assembled here so this file is clean. */
 const RANDOM = `${'Math'}.${'random'}()`;
@@ -133,4 +135,48 @@ test('a leading comment is the whole first comment of a script, a page or a Pyth
   assert.ok(leadingComment('#!/usr/bin/env python3\n# verify\n#\n# GNU General Public License\nimport os\n# not this').includes('GNU'));
   assert.ok(!leadingComment('#!/usr/bin/env python3\n# verify\nimport os\n# GNU General Public License').includes('GNU'));
   assert.equal(leadingComment('const x = 1;'), '');
+});
+
+test('what a live module takes from draw.js is found in every spelling, and the unsafe ones are counted', () => {
+  assert.deepEqual(drawImports("import { drawLive, replayOf as r } from './draw.js';"), { names: ['drawLive', 'replayOf'], unsafe: 0 });
+  assert.deepEqual(drawImports("import {\n  LIMITS,\n  fingerprint,\n} from './draw.js';").names, ['LIMITS', 'fingerprint']);
+  assert.deepEqual(drawImports("// import { drawWithSeed } from './draw.js';\nconst a = 1;"), { names: [], unsafe: 0 });
+  assert.deepEqual(drawImports("import { a } from './other.js';"), { names: [], unsafe: 0 });
+  assert.equal(drawImports("import * as draw from './draw.js';").unsafe, 1);
+  assert.equal(drawImports("import draw from './draw.js';").unsafe, 1);
+  assert.equal(drawImports("import draw, { a } from '../src/draw.js';").unsafe, 1);
+  assert.equal(drawImports("const m = await import('./draw.js');").unsafe, 1);
+  /* The list holds the front door and not the side doors. */
+  for (const door of ['drawLive', 'replayOf', 'checkReceipt', 'parseReceipt', 'fingerprint', 'LIMITS']) {
+    assert.ok(LIVE_DRAW_IMPORTS.includes(door), door);
+  }
+  for (const side of ['drawWithSeed', 'derive', 'orderOf', 'shuffle', 'below', 'showSeed', 'listDigest', 'commitment', 'toHex', 'fromHex']) {
+    assert.ok(!LIVE_DRAW_IMPORTS.includes(side), side);
+  }
+});
+
+test('markup is read without its styles and scripts, the lines kept, and an inline style is found in what is left', () => {
+  const html = '<style>\n a { color: red }\n</style>\n<p style="x">\n<script>\n el.style = "y";\n</script>\n<!-- <b style="z"> -->\n<p class="a">';
+  const markup = markupOnly(html);
+  assert.equal(markup.split('\n').length, html.split('\n').length, 'the lines are where they were');
+  assert.deepEqual(linesMatching(markup, /\sstyle\s*=/i), [4]);
+});
+
+test('the ids a script asks for are found, and a comment does not ask', () => {
+  assert.deepEqual(idsAskedFor("const a = $('one'); document.getElementById(\"two\"); // $('three')"), ['one', 'two']);
+});
+
+test('a page\'s policy is made from its own text: a changed style is a stale policy, and nothing is let in wholesale', () => {
+  const html = '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="__CSP__"><script type="importmap">{"imports":{}}</script><style>a{}</style></head><body><script type="module" src="src/app.js"></script></body></html>';
+  const policy = policyFor(html, 'index.html');
+  const written = withPolicy(html, policy);
+  assert.equal(statedPolicy(written), policyFor(written, 'index.html'), 'written, it is current');
+  const edited = written.replace('<style>a{}</style>', '<style>a{color:red}</style>');
+  assert.notEqual(statedPolicy(edited), policyFor(edited, 'index.html'), 'a style edited after it was written is stale');
+  assert.match(policy, /connect-src 'self'/);
+  assert.match(policy, new RegExp(`script-src 'self' ${CDN.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`));
+  assert.doesNotMatch(policy, /unsafe-/);
+  assert.match(policy, /default-src 'none'/);
+  assert.ok(!policyFor(html, 'verify.html').includes('cdn.jsdelivr.net'), 'the verifier loads nothing from anywhere');
+  assert.deepEqual(Object.keys(PAGES).sort(), ['index.html', 'verify.html']);
 });
