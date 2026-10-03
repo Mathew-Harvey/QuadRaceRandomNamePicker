@@ -34,7 +34,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GRID, makeCourse } from '../src/course.js';
 import { makePlan } from '../src/choreo.js';
-import { AERIAL_FOV, OPEN_FOV, RAIL_FOV, fovFor, makeShots } from '../src/camera.js';
+import {
+  AERIAL_FOV, HERO_AFTER, HERO_DISTANCE, HERO_FLOOR, HERO_FOV, HERO_RISE, OPEN_FOV, RAIL_FOV, fovFor, makeShots,
+} from '../src/camera.js';
 import { FLEET_SCALE } from '../src/layout.js';
 import { orderFor } from './lib/plan-cases.js';
 
@@ -226,4 +228,25 @@ test('a phone held upright gets a lens wide enough to show the track', () => {
   const portrait = fovFor(RAIL_FOV, 9 / 16);
   const horizontal = (2 * Math.atan(Math.tan((portrait * Math.PI) / 360) * (9 / 16)) * 180) / Math.PI;
   assert.ok(horizontal >= 49.9, `the horizontal field is ${horizontal} degrees`);
+});
+
+test('the winner\'s picture is aimed at the winner, from the infield, a fixed way off, when the flip is half way round', () => {
+  const view = {};
+  const pose = {};
+  for (const { plan } of PLANS) {
+    const winner = plan.order[0];
+    const t = plan.finish[winner] + HERO_AFTER;
+    shots.hero(plan, t, view);
+    plan.pose(winner, t, pose);
+    assert.ok(Math.abs(view.tx - pose.x) < 1e-9 && Math.abs(view.ty - pose.y) < 1e-9 && Math.abs(view.tz - pose.z) < 1e-9, 'aimed exactly at the winner, which is what the page\'s view offset is worked out from');
+    assert.ok(Math.abs(Math.hypot(view.x - pose.x, view.y - pose.y) - HERO_DISTANCE) < 1e-9, 'a fixed distance off, abeam');
+    assert.ok(Math.abs(view.z - Math.max(HERO_FLOOR, pose.z + HERO_RISE)) < 1e-9, 'a little below, and never under the floor');
+    assert.ok(view.z >= HERO_FLOOR, 'above the ground');
+    assert.equal(view.fov, HERO_FOV);
+    assert.ok(Math.hypot(view.x, view.y) < Math.hypot(pose.x, pose.y), 'on the infield side, nearer the middle of the oval than the winner is');
+    assert.ok(Math.abs(pose.flip - Math.PI) < 1e-6, `the quad is upside down in the picture: ${pose.flip}`);
+    /* A pure function: the same plan and time make the same picture. */
+    const again = shots.hero(plan, t, {});
+    assert.deepEqual(again, view);
+  }
 });

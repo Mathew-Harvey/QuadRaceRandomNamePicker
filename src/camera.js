@@ -9,7 +9,7 @@
  * is. Where a shot needs to be smooth it is smooth by construction, an
  * average of the plan over a short window, not a lag.
  *
- * THE FIVE SHOTS.
+ * THE SHOTS.
  *
  *   paddock    a slow orbit over the grid while names are typed, centred on
  *              the grid rather than on the oval: the simulator's own title
@@ -19,9 +19,11 @@
  *   aerial     high over the field, then down to the rail, for the lights.
  *   rail       the race: side on from the infield, on a rail concentric with
  *              the line, following the leading group, leaving room ahead.
- *   finish     the rail camera glides to a stop square to the line, so the
- *              pack crosses a still frame.
- *   held       the frame of the winner at the line, for the results page.
+ *              It glides to a stop square to the line, so the pack crosses
+ *              a still frame.
+ *   held       the rail's frame where it stops, as a fixed shot.
+ *   hero       the winner, close, a moment after the line, for the results
+ *              page's big panel.
  *
  * THE RAIL. It is 20 m inside the line and 5 m up. The pack crosses its frame
  * left to right all the way round because the quads race clockwise and the
@@ -58,6 +60,22 @@ import { GRID, cosPi, sinPi } from './course.js';
 export const RAIL_FOV = 34;
 export const OPEN_FOV = 46;
 export const AERIAL_FOV = 54;
+
+/*
+ * The winner's picture: 2.4 m off and a little below, looking up, 30 degrees
+ * of vertical field, so a quad 0.4 m across is a third of the panel's height
+ * and is against the trees and the sky and not the grass. On the rail's own
+ * lens it would be forty pixels in a panel five hundred high, and the page is
+ * lettered round a picture of it, so it is brought in. The eye is never lower
+ * than HERO_FLOOR above the ground, whatever level the quad is flying at.
+ */
+export const HERO_FOV = 30;
+export const HERO_DISTANCE = 2.4;
+export const HERO_RISE = -0.25;
+export const HERO_FLOOR = 0.6;
+
+/* How long after the winner crosses the picture is taken: the flip is half way round, and the quad is upside down. */
+export const HERO_AFTER = 0.45;
 
 const jerk = (t) => {
   const x = Math.min(1, Math.max(0, t));
@@ -296,5 +314,36 @@ export function makeShots({ course }) {
     return lookAt(out, eye, aim, RAIL_FOV + 4);
   }
 
-  return { paddock, aerial, rail, held, groupAt, railS, fovFor, stopShort: STOP_SHORT };
+  /*
+   * The winner's picture, for the results page: a camera on the infield side
+   * of the winner, abeam of it, a few metres off and a little above, looking
+   * at it. It is aimed AT the winner, exactly, because the results page puts
+   * the winner where it wants it in the window with a view offset, and an
+   * offset is worked out from where the aim is. `fov` is the vertical field
+   * the panel is to cover; the page widens it for the rest of the window.
+   *
+   * It is a pure function of the plan and the time, like every other shot, so
+   * a replay of the same receipt makes the same picture.
+   */
+  const pose = {};
+  const railEye = {};
+  function hero(plan, t, out = {}) {
+    const winner = plan.order[0];
+    plan.pose(winner, Math.min(t, plan.duration), pose);
+    course.rail(pose.s, railEye);
+    let dx = railEye.x - pose.x;
+    let dy = railEye.y - pose.y;
+    const flat = Math.sqrt(dx * dx + dy * dy) || 1;
+    dx /= flat;
+    dy /= flat;
+    eye.x = pose.x + dx * HERO_DISTANCE;
+    eye.y = pose.y + dy * HERO_DISTANCE;
+    eye.z = Math.max(HERO_FLOOR, pose.z + HERO_RISE);
+    aim.x = pose.x;
+    aim.y = pose.y;
+    aim.z = pose.z;
+    return lookAt(out, eye, aim, HERO_FOV);
+  }
+
+  return { paddock, aerial, rail, held, hero, groupAt, railS, fovFor, stopShort: STOP_SHORT };
 }

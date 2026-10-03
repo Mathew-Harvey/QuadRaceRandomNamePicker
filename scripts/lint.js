@@ -193,6 +193,59 @@ export function moduleSpecifiers(text) {
   ].map((m) => m[1]);
 }
 
+/*
+ * What the live page may take from src/draw.js: the door a draw goes through
+ * (drawLive, and replayOf for a show), the receipt in and out, the canonical
+ * forms of a name and a title, the fingerprint, whether this page can draw at
+ * all, and the limits. Everything else in that file, drawWithSeed, derive,
+ * the shuffle, the digests and the hex helpers, is the verifiers' and the
+ * tests', and a live module that reached for one would be a second door.
+ */
+export const LIVE_DRAW_IMPORTS = Object.freeze([
+  'drawLive', 'replayOf', 'parseReceipt', 'checkReceipt', 'receiptJSON', 'receiptText', 'receiptFragment',
+  'receiptFromFragment', 'canonicalName', 'canonicalNames', 'canonicalTitle', 'fingerprint', 'available',
+  'LIMITS', 'ALGORITHM', 'ReceiptError',
+]);
+
+/*
+ * The names a module imports from a file called draw.js, and how many of its
+ * imports take more than names: a namespace, a default, a mix of the two, or
+ * a dynamic import, none of which can be held to a list.
+ */
+export function drawImports(text) {
+  const code = stripComments(text);
+  const names = [];
+  let unsafe = 0;
+  for (const m of code.matchAll(/\bimport\s*([^'"`;]*?)\s*from\s*['"`][^'"`]*\bdraw\.js['"`]/g)) {
+    const clause = m[1].trim();
+    if (clause.startsWith('{') && clause.endsWith('}')) {
+      for (const part of clause.slice(1, -1).split(',')) {
+        const name = part.trim().split(/\s+as\s+/)[0].trim();
+        if (name) {
+          names.push(name);
+        }
+      }
+    } else {
+      unsafe += 1;
+    }
+  }
+  if (/\bimport\s*\(\s*['"`][^'"`]*\bdraw\.js['"`]/.test(code)) {
+    unsafe += 1;
+  }
+  return { names, unsafe };
+}
+
+/* A page's markup with its styles, scripts and comments blanked, the lines kept, so what is left is what a policy without unsafe-inline would refuse a `style` attribute in. */
+export function markupOnly(html) {
+  const blank = (m) => m.replace(/[^\n]/g, '');
+  return html.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, blank).replace(/<script\b[\s\S]*?<\/script>/gi, blank).replace(/<!--[\s\S]*?-->/g, blank);
+}
+
+/* The ids a script asks the document for by name: getElementById('x') and the page's own $('x'). */
+export function idsAskedFor(text) {
+  return [...stripComments(text).matchAll(/(?:getElementById|\$)\(\s*['"`]([^'"`]+)['"`]\s*\)/g)].map((m) => m[1]);
+}
+
 /* Identifiers that mean the module touches a page, a store or a window. */
 export function domTouches(text) {
   const code = stripComments(text);
@@ -427,6 +480,146 @@ async function run() {
   } else {
     check('verify.html imports src/draw.js and nothing else', 'skip', 'verify.html is not written yet');
   }
+
+  /*
+   * THE LIVE PAGE TAKES ONLY THE DRAW'S FRONT DOOR FROM src/draw.js.
+   *
+   * The names are on a list (LIVE_DRAW_IMPORTS) and a namespace, a default or a
+   * dynamic import, which cannot be held to a list, is refused. The seeded
+   * draw has its own check above; this is the same wall, one step wider.
+   */
+  {
+    const live = ownSource.filter((rel) => /^src\/.*\.js$/.test(rel) && rel !== 'src/draw.js');
+    const bad = [];
+    for (const rel of live) {
+      const { names, unsafe } = drawImports(read(rel));
+      for (const n of names) {
+        if (!LIVE_DRAW_IMPORTS.includes(n)) {
+          bad.push(`${rel} takes ${n}`);
+        }
+      }
+      if (unsafe) {
+        bad.push(`${rel} takes more than names`);
+      }
+    }
+    check(
+      'the live page takes only the draw\'s front door from src/draw.js',
+      bad.length === 0,
+      bad.length ? `FOUND ${where(bad)}` : `${live.length} live modules read`,
+    );
+  }
+
+  /*
+   * EACH PAGE'S CONTENT-SECURITY-POLICY IS THE ONE ITS OWN TEXT MAKES.
+   *
+   * The two inline blocks are named by hash, so an edit to either is a stale
+   * policy and a page whose styles or import map the browser refuses. The
+   * policy must also keep connect-src to this origin, which is the line that
+   * makes "names never leave the browser" something the browser enforces, and
+   * must not allow inline script or style wholesale.
+   */
+  {
+    const { PAGES, policyFor, statedPolicy } = await import('./csp.js');
+    const bad = [];
+    for (const name of Object.keys(PAGES)) {
+      if (!files.includes(name)) {
+        continue;
+      }
+      const html = read(name);
+      const stated = statedPolicy(html);
+      if (stated !== policyFor(html, name)) {
+        bad.push(`${name} is STALE (npm run csp)`);
+      }
+      if (!stated || !/(?:^|;\s*)connect-src 'self'(?:;|$)/.test(stated) || /'unsafe-(?:inline|eval)'/.test(stated)) {
+        bad.push(`${name} does not keep connect-src to this origin, or allows unsafe code`);
+      }
+    }
+    check(
+      'each page\'s Content-Security-Policy is the one its own text makes, and keeps requests to this origin',
+      bad.length === 0,
+      bad.length ? bad.join('; ') : `${Object.keys(PAGES).length} pages`,
+    );
+  }
+
+  /*
+   * NO INLINE STYLE ATTRIBUTES.
+   *
+   * A policy without unsafe-inline refuses them, silently, and what is lost is
+   * a style nobody can find. Styles are set from script through the element's
+   * own style object, which the policy does not touch.
+   */
+  {
+    const hits = [];
+    for (const rel of ['index.html', 'verify.html']) {
+      if (files.includes(rel)) {
+        for (const n of linesMatching(markupOnly(read(rel)), /\sstyle\s*=/i)) {
+          hits.push(`${rel}:${n}`);
+        }
+      }
+    }
+    for (const rel of ownSource.filter((r) => /^src\/.*\.js$/.test(r))) {
+      for (const n of linesMatching(stripComments(read(rel)), /setAttribute\(\s*['"`]style|\bcssText\b/)) {
+        hits.push(`${rel}:${n}`);
+      }
+    }
+    check(
+      'no inline style attributes in a page or set as one from script',
+      hits.length === 0,
+      hits.length ? `FOUND ${where(hits)}` : 'styles are in the style blocks and on the style object',
+    );
+  }
+
+  /*
+   * EVERY ID THE SCRIPTS ASK FOR IS IN THE PAGE.
+   *
+   * A getElementById that finds nothing is null, and the first thing done to
+   * it is a crash at boot that no unit test can see.
+   */
+  if (files.includes('index.html')) {
+    const html = read('index.html');
+    const have = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+    const missing = [];
+    for (const rel of ['src/app.js', 'src/hud.js']) {
+      if (files.includes(rel)) {
+        for (const id of idsAskedFor(read(rel))) {
+          if (!have.has(id)) {
+            missing.push(`${rel} asks for #${id}`);
+          }
+        }
+      }
+    }
+    check(
+      'every id the scripts ask for is in index.html',
+      missing.length === 0,
+      missing.length ? `MISSING ${where(missing)}` : `${have.size} ids on the page`,
+    );
+  }
+
+  /*
+   * NO BETAFLIGHT, AND NO PARTNER'S NAME, IN THE PICKER'S OWN PAGES.
+   *
+   * This app runs no Betaflight code, and a partner's placement is agreed one
+   * at a time. CLAUDE.md, PROGRESS.md and NOTICE say why, and are the places
+   * the words may be; sim/ is the simulator's, held by the manifest.
+   */
+  {
+    const words = /betaflight|global drone solutions|mantis fpv|west coast multirotor/i;
+    const shipped = own.filter((rel) => /^(?:index|verify)\.html$|^src\/|^tools\/|^README\.md$|^RANDOMNESS\.md$/.test(rel));
+    const hits = [];
+    for (const rel of shipped) {
+      for (const n of linesMatching(read(rel), words)) {
+        hits.push(`${rel}:${n}`);
+      }
+    }
+    check(
+      'no Betaflight name and no partner\'s name in the picker\'s own pages',
+      hits.length === 0,
+      hits.length ? `FOUND ${where(hits)}` : `${shipped.length} files read`,
+    );
+  }
+
+  /* GitHub Pages is told to serve the files as they are. */
+  check('.nojekyll is there, so Pages serves the files as they are', files.includes('.nojekyll'), files.includes('.nojekyll') ? 'present' : 'MISSING');
 
   /*
    * 10c. EVERY URL IS RELATIVE.

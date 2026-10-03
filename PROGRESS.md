@@ -233,3 +233,105 @@ The track document for the simulator (it needs the simulator's schema, which arr
 ### Not done, by design
 
 Everything on screen: the setup sheet, the tower, the tags, the chip, the beats, the results page, sponsor intake (the stretch for the camera is `src/sponsors.js`'s, and `tools/fly.html` stretches its made up marks by hand to look at the grass), the draw log, sound, the flow and `scripts/shots.js`. The flip and the wobble are in the maths (`tests/frame.test.js`) and have not been looked at in a picture yet.
+
+
+## 2026-10-03 | milestone 4 | The flow
+
+### What changed
+
+- **`src/app.js`** is the page's one script and its state machine: loading, setup, sealed, lights, race, finish, results. Arm makes the draw (`drawLive`), writes it to the log, and only then starts the show. The plan is made from the order and the show seed `replayOf` recomputes from the receipt, for a live show and a replay alike, so they are one race. One `requestAnimationFrame` loop owns the clocks, clamped to a tenth of a second a frame so a hidden tab comes back where it left off. `world.js` is imported on demand, after asking an unseen canvas whether WebGL2 exists, so a page with no WebGL or no CDN still draws, seals and shows its results.
+- **`src/results.js`** builds the results page when the last drawn winner has crossed and not before. The big panel's picture is the world's, drawn for the panel and copied into a canvas of its own; second and third have their panels when they are drawn; the order, the seal (fingerprint, commitment, the seed revealed, a mint tick if the revealed seed gives the fingerprint that was on the glass) and four actions. The focus lines converge on the winner, are seeded from the commitment and never move.
+- **`src/page.js`** (the manga page's geometry), **`src/titles.js`** (the board's lettering join), **`src/hud.js`** (clock, lap, tower, tags, beats, the corner chip, the live region), **`src/show.js`** (the list, the odds, the lamps, the clock through a photo finish, the standings, the beats, the tag placement), **`src/store.js`** (localStorage inside try and catch, the draw log of fifty), **`src/sponsors.js`** (four marks, trimmed, stretched for the rail camera, kept as a smaller copy), **`src/lens.js`** (the grade pass's barrel distortion as arithmetic, so a tag lands on its quad and the winner lands in the middle of a panel that is not the middle of the window).
+- **`src/camera.js`** has a `hero` shot, **`src/world.js`** has `screenOf`, a view `offset` on `frame()`, and the live distortion.
+- **`index.html`** is the page: the setup sheet (title, names with a gutter that numbers and colours each line, the odds, a comma list offer, numbers 1 to N, length and winners, four sponsor slots, the arm switch pinned to the foot of the sheet, the draw log, the links), the race overlay, the results page's styles, the forced colours and reduced motion blocks. **`verify.html`** is in the family's furniture, with a policy of its own and still importing `src/draw.js` and nothing else.
+- **`scripts/csp.js`** writes each page's Content-Security-Policy from the page's own text: `default-src 'none'`, `connect-src 'self'`, three.js from its one directory of the CDN, each inline block by its SHA-256. **`scripts/shots.js`** is checks 11, 12 and 13. **`scripts/lint.js`** has six new checks (below). `CLAUDE.md` has one new decision and one new working rule.
+- **Tests**: `lens`, `show`, `store`, `sponsors`, `page`, a hero shot test in `camera`, and the new lint helpers, 43 more than milestone 3 left.
+
+### Measured
+
+    npm test        125 of 125 pass, 26 s wall
+    npm run lint    16 of 16 clean (new: the live page's imports from draw.js, each page's policy current and strict, no inline
+                    style attributes, every id the scripts ask for is in the page, no Betaflight or partner name in the picker's
+                    own pages, .nojekyll)
+    node scripts/shots.js    83 of 83 checks, seven scenarios (flow 29, sheet 16, actions 10, bare 8, reload 8, phone 6, reduced 6)
+
+    check 11, flow: 50 names with a name twice, four logos dropped one at a time and one rebuild of the field for the four, the seal on the glass
+                    (the log already holds the draw, and its fingerprint is the one shown), two amber lamps, mid race, the finish with
+                    "<winner> wins", the results (winner, all fifty rows in the drawn order, the seal ticked, the winner's time equal to the
+                    time the clock stopped at, the picture drawn), the receipt downloaded as a file and copied to the clipboard, a replay that
+                    says REPLAY and issues nothing, and the verify page with the receipt pasted, once true and once with one seed digit changed
+    check 12:       no console error or warning and no policy report in any of the seven scenarios, and every request the page makes is for
+                    this server or for three.js at 0.160.0
+    check 13:       the page read 394 to 402 times while a race ran, and at none of them before the results was there a results page, a
+                    panel, a winner's title or a finishing order in the document. To see that the check can fail I put a results element
+                    in the document from the start of the race: it failed at once, with the sample, and the file was put back byte for byte.
+
+    a plan for fifty names takes 31 to 63 ms to make in Node (the median of twelve, at each length) and 98 ms at worst, the beats 2 to 7 ms, so
+    both are made between the draw and the seal without a frame being missed
+    the field builds in 3 to 4 s on the software rasteriser at the low preset; the whole flow (50 names, four logos, a 30 s race at ?speed=6,
+    the results, a replay, the verify page) takes about 70 s of wall clock
+
+Not measured: frame time on a real GPU, a real phone (the phone scenario is a 390 by 844 window with touch emulation), any browser but Chromium, a screen reader, fullscreen on a real display, or whether anyone enjoys it. Those are the owner's pass.
+
+### What went wrong, in the order it was found
+
+- **`drawHero` was gated on a variable that is assigned after the call it is made inside.** The page asks for the winner's picture from its first layout, which runs inside `buildResults`, before `results` has a value. Found by reading it back, before the first run, and the gate is a flag that is set first.
+- **The results page was sized for a window 900 pixels high and no other.** The page's size variables were set on the document, and the stylesheet gives the page defaults of its own, which win on its subtree: `--u` stayed 9 px. A 1600 by 900 window is exactly 9, so the first pictures were right. The phone run had type 28 px high in a 390 px page. They are set on the page's own root now, `--u` has a floor of 5.2 px (a hundredth of a phone's width is under four), and the small type has floors of its own.
+- **I edited the stylesheet once without running `npm run csp`, and the browser refused the whole stylesheet.** Check 12's list had it ("Refused to apply inline style") on the first run after. That is what a hash is for, and what the new lint check is for: it fails on a stale policy, and on a policy that has lost `connect-src 'self'` or gained `unsafe-inline`.
+- **The phone overlay's rules were above the rules they override**, so the corner chip had `top` and `bottom` both set and stood from the top of the screen to the bottom. The later of two equal rules wins; the phone block is after everything it overrides.
+- **The wordmark stood on the first row of the timing tower, the seal chip stood on the Present button, and a name tag stood on the tower.** The wordmark is hidden while the overlay is up, the chip is under the bar, and `placeTags` takes the tower, the clock and the chip as boxes no tag may cover, the forced top three included.
+- **The winner's picture was a dot.** At 6 m with 36 degrees the quad was about 25 px in a 1537 px panel. At 3.4 m it was about 85. It is 2.4 m off, a little below, looking up, 30 degrees, so the quad is about 140 px against the trees and the boards, in the middle of its flip. The camera test holds the aim exactly on the winner, because the page's offset is worked out from where the aim is.
+- **Three in the lint.** A comment that named the browser's generator in full tripped the grep for it, which has no exceptions on purpose. The policy's CDN source was a bare origin, which allows every package on it and which the URL check also refused; it is the pinned directory now. And three.js says "A WebGL context could not be created" on the console three times when there is none, which is a page with nothing wrong with it reporting errors, so the page asks first.
+- **`?speed=` first scaled every clock, and the seal and the lights were too short to photograph.** It scales the race clock now, which is the long part.
+- **Four mistakes in my own checks**: a click on the arm switch while the sheet was still sliding in lands where the switch will be and is not (the checks wait for the transition); I miscounted the log's entries in the actions scenario; a tampered name makes a receipt the page cannot read at all, not one it fails, so the tamper is one digit of the seed; and the no WebGL page's winner name was ink on paper, a solid blob, now a dark mint.
+
+### Decisions to know about
+
+- **The results page arrives 2.6 s of race time after the last drawn winner crosses**, which is the flip, the beat that names her and a breath. It does not wait for the field: fifty quads trickle across for several seconds after the first, and nobody watches that. "Skip to the result" is on screen from the moment of the seal, large and mint under reduced motion.
+- **The picture on the results page is copied into the panel's own canvas.** A window onto the world's canvas behind the page is shorter, and wrong the moment the strip scrolls. `CLAUDE.md` says why and what must not move.
+- **Race again and Draw again without the winners arm at once.** The second takes the winners' lines out of the list by entry number when the sheet is as it was when the draw was made, and by name when it is not.
+- **The log lists earlier draws' winners** (the operator's own browser, theirs to see), and it is not redrawn between the seal and the results, so the draw being shown is not in the document before the winner crosses.
+- **Nothing in the page exists for the tests.** Three words on `<body>` (`data-state`, `data-field`, `data-lamps`) say what the page is doing so a check can wait for it; nothing reads them back, and no field, parameter or key sets a seed or a winner (the lint keeps `drawWithSeed` out of every live file).
+- **The sound button is in the page and hidden**, until it does something.
+- **The verify page keeps a text wordmark,** because lettering would be a second import and the page's whole claim is one.
+
+### What I saw and did not fix, for milestone 5
+
+- **The aerial is not good yet.** At the amber lamps the camera is looking at the horizon with the gantry at the bottom right corner: the lamps are the point of the shot and they are out of frame.
+- **The rail's first frame has the gantry's near upright in the middle of it**, because at t = 0 the camera is abeam of the line and the grid is behind the line. It slides out of frame in a second, and the first second is the launch.
+- **On a phone held upright the pack is a few pixels**, because the lens widens to keep 50 degrees across.
+- **The spread's order panel shows nine rows**; the rest scroll inside it. The seal panel's last paragraph is cut off at 900 px high.
+- **The quad in the winner's picture is a dark upside down shape**; its colour barely reads. The livery wants a look at that moment.
+- **The photo finish's slow motion has not been looked at in a picture**, and the winner's flip has been looked at once, at the half way point.
+
+### Not done, by design
+
+Sound, the calm rail for reduced motion (today the lights cut to the rail's first frame, the seal is a chip and the skip button is large), the aerial, the phone's rail, the README, and the final pass over the policy. 
+
+### Open questions for the owner
+
+The site icon's accent (the page ships `data:,`), whether the picker is mounted under `webfpv.org/<mount>/` (every URL is already relative), and whether any official partner mark appears here (none does: this app runs no Betaflight code and a placement is agreed one at a time). No decision in this milestone needed the owner: nothing changed the algorithm, added a dependency, showed anything a sponsor could read as an endorsement, or touched another repository.
+
+
+## 2026-10-03 | milestone 4, second pass | What the brief says that the first pass did not do
+
+I read the brief's screens and show sections against the page again after the push, line by line, and found five things it asks for that I had not built, or had built the other way round.
+
+- **Arming is off past fifty lines.** The brief says a 51st line says fifty is the most the grid holds "and arming is disabled". I had let it arm with the first fifty and struck the rest through, and my own check held that. The line is struck, the status says fifty is the most and how many lines to take off, and the arm switch is off until they are gone. The check now says so, and also that "Numbers 1 to N" turns it back on.
+- **The event title is lettered on the results page**, top right of the big panel, as it is on the gantry.
+- **The draw log has a clear control** (it asks twice), and each entry copies and saves its receipt as well as replaying and verifying.
+- **With no WebGL there is a countdown**, 3, 2, 1, between the seal and the results page. It was the seal and then the page.
+- **The quads on the grid carry their names while the sheet is up.** "Each name typed drops a quad onto the next block with its tag." The tags go through the same lens and the same placement as the race's, and the sheet's own box is not a thing they avoid, because the sheet is over them. The drop in and the lift off are milestone 5's.
+
+Found on the way: the tower laid its rows out at the default row height, which is 28 px, and the real height is 28 times `--s`, so the tenth row was nine pixels off. A row is measured when it first shows.
+
+### Measured
+
+    npm test        125 of 125 pass
+    npm run lint    16 of 16 clean
+    node scripts/shots.js   91 of 91 checks, seven scenarios (flow 31, sheet 17, reload 11, actions 10, bare 10, phone 6, reduced 6),
+                            and check 13 read the page 394 to 457 times through a race
+
+### What went wrong
+
+- **A check that passed for the wrong reason, in my own command.** I chained the unit tests, the lint and the shots with `&&` behind a `| grep` and a `| tail`, and a pipeline's status is its last command's, so a failing suite would not have stopped the chain. I ran each on its own afterwards, with its own exit code, and put that in this entry's numbers.

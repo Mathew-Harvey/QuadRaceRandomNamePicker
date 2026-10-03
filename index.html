@@ -1,0 +1,768 @@
+<!doctype html>
+<!--
+  index.html: the WebFPV Race Name Picker.
+
+  Up to fifty names go in. Each becomes a five inch quad on a start grid in
+  the simulator's race field. The draw is made first, with the browser's
+  cryptographic random generator, and sealed: its fingerprint is on the glass
+  before the lamps go. Then the quads fly a few laps, filmed side on, and cross
+  the line in exactly the order that was drawn. The results page breaks the
+  seal, so anyone can check the draw, here, in Node or in Python.
+
+  The styles are inline, as the family's pages have them, so that nothing about
+  how the page looks depends on a server's MIME table. They are named in the
+  Content-Security-Policy by their hash, as the import map is, and `npm run
+  csp` writes the hashes; the lint fails the day they are stale.
+
+  This file is part of the WebFPV Race Name Picker.
+
+  The WebFPV Race Name Picker is free software: you can redistribute it
+  and/or modify it under the terms of the GNU General Public License as
+  published by the Free Software Foundation, either version 3 of the
+  License, or (at your option) any later version.
+
+  The WebFPV Race Name Picker is distributed in the hope that it will be
+  useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+  General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with the WebFPV Race Name Picker. If not, see
+  <https://www.gnu.org/licenses/>.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net/npm/three@0.160.0/ 'sha256-UK9O+rbB3KhDsGQrE55qyNAJCpV7WHc47zV2U5f4bE4='; style-src 'self' 'sha256-FL7NgN21h3sOPhD9WPJZLi7ZSjrYXCTzzZli70s/RhE='; img-src 'self' data: blob:; connect-src 'self'; font-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#141c16">
+  <title>WebFPV Race Name Picker</title>
+  <meta name="description" content="Type up to fifty names. The result is drawn first, with your browser's cryptographic random generator, and sealed. Then the quads race, and finish in exactly the order that was drawn. Anyone can check the draw.">
+  <link rel="icon" href="data:,">
+  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js">
+  <style>
+    /* ---------------------------------------------------------------
+       Tokens. The family's palette, unchanged: the simulator's index.html
+       and the board's page. Dark only.
+       --------------------------------------------------------------- */
+    :root {
+      --cream: #f3ead4;
+      --sakura: #e8a8b8;
+      --amber: #ffd45c;
+      --mint: #7dffb4;
+      --slate: #9db3c8;
+      --dim: #8a9a86;
+      --deep: #141c16;
+      --danger: #ff8f8f;
+      --paper: #f7f0dc;
+      --ink: #0b1116;
+      --panel: rgba(16, 22, 17, 0.86);
+      --sunk: rgba(11, 16, 12, 0.62);
+      --line: rgba(244, 236, 214, 0.12);
+      --edge: rgba(232, 168, 184, 0.28);
+      --ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      /* The OSD is inked, like the lettering: a hard edge in the town's ink, eight one pixel offsets for small print and eight two pixel ones for the big numerals. */
+      --osd-ink: #0b1116;
+      --osd-slate: #c6d4e1;
+      --osd-edge:
+        -1px -1px 0 var(--osd-ink), 0 -1px 0 var(--osd-ink), 1px -1px 0 var(--osd-ink),
+        -1px 0 0 var(--osd-ink), 1px 0 0 var(--osd-ink),
+        -1px 1px 0 var(--osd-ink), 0 1px 0 var(--osd-ink), 1px 1px 0 var(--osd-ink),
+        0 2px 4px rgba(0, 0, 0, 0.6);
+      --osd-edge-2:
+        -2px -2px 0 var(--osd-ink), 0 -2px 0 var(--osd-ink), 2px -2px 0 var(--osd-ink),
+        -2px 0 0 var(--osd-ink), 2px 0 0 var(--osd-ink),
+        -2px 2px 0 var(--osd-ink), 0 2px 0 var(--osd-ink), 2px 2px 0 var(--osd-ink),
+        0 3px 8px rgba(0, 0, 0, 0.7);
+      /* One unit of the race overlay: about a pixel at 900 lines, and the vmin the overlay is sized in for a projector. */
+      --s: clamp(0.9px, 0.115vmin, 1.7px);
+      --bar: 56px;
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--deep);
+      color: var(--cream);
+      font: 15px/1.45 var(--ui);
+      font-variant-numeric: tabular-nums lining-nums;
+      -webkit-font-smoothing: antialiased;
+      overscroll-behavior: none;
+    }
+    body {
+      background: radial-gradient(120% 90% at 50% 6%, #1e2a20, #101610 60%) fixed;
+    }
+    body.idle { cursor: none; }
+    /* The wordmark is the sheet's and the results', and over the race it would stand on the first row of the timing tower. */
+    body:is([data-state="sealed"], [data-state="lights"], [data-state="race"], [data-state="finish"]) .bar .wordmark { visibility: hidden; }
+
+    a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+    textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+      outline: 2px solid var(--sakura);
+      outline-offset: 3px;
+      border-radius: 2px;
+    }
+
+    .vh {
+      position: absolute !important;
+      width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden;
+      clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+    }
+
+    .skip {
+      position: fixed; left: 12px; top: -56px; z-index: 90;
+      padding: 8px 12px; background: var(--mint); color: var(--deep);
+      font: 700 13px/1 var(--ui); text-decoration: none; border-radius: 3px;
+    }
+    .skip:focus { top: 12px; }
+
+    /* ---------------------------------------------------------------
+       The world. The canvas is the simulator's field and fades in when
+       the build is done: the sheet is usable long before that.
+       --------------------------------------------------------------- */
+    #view {
+      position: fixed; inset: 0; z-index: 0;
+      display: block; width: 100%; height: 100%;
+      opacity: 0; transition: opacity 900ms ease;
+      touch-action: none;
+    }
+    body.ready #view { opacity: 1; }
+    body[data-state="results"] #view { visibility: hidden; }
+
+    .empty-note {
+      position: fixed; z-index: 2; left: 50%; top: 42%;
+      transform: translate(-50%, -50%);
+      font: 800 clamp(16px, 2.2vmin, 28px)/1.2 var(--ui); letter-spacing: 0.16em; text-transform: uppercase;
+      color: var(--cream); text-shadow: var(--osd-edge-2); text-align: center; pointer-events: none;
+      padding: 0 16px;
+    }
+    @media (min-width: 901px) {
+      .empty-note { left: calc(50% + 215px); }
+    }
+
+    /* ---------------------------------------------------------------
+       The wordmark and the titles, lettered. titles.js lays the canvases
+       the simulator's own lettering paints over the words, which stay, in
+       place, for a screen reader, find in page and the layout. This hides
+       their fill and not the text, and sets them in heavy capitals because
+       the lettering is, so the lines the browser breaks a title into are
+       the lines the lettering draws.
+       --------------------------------------------------------------- */
+    .wordmark, h2.lettered, .winner-name { margin: 0; }
+    .wordmark { font-size: 30px; line-height: 1.05; white-space: nowrap; }
+    .wordmark .w, .wordmark .r { color: var(--cream); }
+    .wordmark .f { color: var(--sakura); }
+    .is-lettered {
+      position: relative;
+      -webkit-text-fill-color: transparent;
+      text-shadow: none;
+      text-transform: uppercase;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+    h2.is-lettered, .winner-name.is-lettered { line-height: 1.1; text-wrap: balance; }
+    .lettered-art { position: absolute; left: 0; top: 0; display: block; pointer-events: none; }
+    .lettered-probe { display: inline-block; width: 0; height: 0; vertical-align: baseline; }
+
+    /* ---------------------------------------------------------------
+       The top bar: the wordmark, and the two controls a person wants
+       during the show, because the sheet is gone by then.
+       --------------------------------------------------------------- */
+    .bar {
+      position: fixed; z-index: 20; left: 0; right: 0; top: 0;
+      height: var(--bar);
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 0 20px;
+      pointer-events: none;
+    }
+    .bar > * { pointer-events: auto; }
+    .bar .wordmark { text-decoration: none; }
+    .controls { display: flex; gap: 8px; }
+    .btn {
+      appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 8px 14px; border-radius: 3px;
+      border: 1px solid var(--line); background: rgba(16, 22, 17, 0.62);
+      color: var(--slate); font: 600 12.5px/1.2 var(--ui); letter-spacing: 0.04em;
+      text-decoration: none; cursor: pointer;
+      transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+    }
+    .btn:hover { color: var(--cream); border-color: rgba(232, 168, 184, 0.55); background: rgba(232, 168, 184, 0.08); }
+    .btn[aria-pressed="true"] { color: var(--deep); background: var(--mint); border-color: var(--mint); }
+    .btn.small { padding: 6px 10px; font-size: 12px; }
+    .btn[disabled] { opacity: 0.45; cursor: default; }
+    .text {
+      appearance: none; background: none; border: 0; padding: 0;
+      color: var(--slate); font: 600 12.5px/1.3 var(--ui); letter-spacing: 0.03em;
+      text-decoration: underline; text-decoration-color: rgba(157, 179, 200, 0.4); text-underline-offset: 3px;
+      cursor: pointer; transition: color 120ms ease;
+    }
+    .text:hover { color: var(--sakura); }
+
+    /* ---------------------------------------------------------------
+       The setup sheet: the simulator's menu panel. No radius, an ink
+       ring, a paper ring, a hard drop, a sakura top edge. A sheet on the
+       left over the live field, and a bottom sheet under 900 px.
+       --------------------------------------------------------------- */
+    .sheet {
+      position: fixed; z-index: 10;
+      left: 20px; top: calc(var(--bar) + 8px); bottom: 20px;
+      width: min(430px, calc(100vw - 40px));
+      overflow-y: auto; overscroll-behavior: contain;
+      padding: 16px 20px 18px;
+      border-radius: 0;
+      background: rgba(16, 22, 17, 0.78);
+      border-top: 2px solid rgba(232, 168, 184, 0.55);
+      box-shadow:
+        inset 0 0 0 1px rgba(244, 236, 214, 0.10),
+        0 0 0 2px var(--ink),
+        0 0 0 3px rgba(247, 240, 220, 0.32),
+        7px 8px 0 1px rgba(11, 17, 22, 0.5);
+      transition: transform 420ms cubic-bezier(0.5, 0, 0.2, 1), opacity 300ms ease, visibility 0s linear 0s;
+      scrollbar-width: thin; scrollbar-color: rgba(232, 168, 184, 0.4) transparent;
+    }
+    body:not([data-state="setup"]):not([data-state="loading"]) .sheet {
+      transform: translateX(-112%); opacity: 0; visibility: hidden;
+      transition: transform 420ms cubic-bezier(0.5, 0, 0.2, 1), opacity 300ms ease, visibility 0s linear 420ms;
+    }
+
+    .eyebrow {
+      font-size: 10.5px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--sakura);
+    }
+    .eyebrow::after { content: ""; display: block; width: 36px; height: 2px; background: var(--sakura); margin: 8px 0 10px; }
+    .sheet h2 { font-size: 24px; margin-bottom: 4px; }
+    .lede { margin: 0 0 14px; color: var(--slate); font-size: 13px; }
+
+    .field { margin: 14px 0 0; }
+    .field > label, .field > .label, legend.label {
+      display: flex; justify-content: space-between; align-items: baseline;
+      padding: 0; margin: 0 0 6px;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--slate);
+    }
+    .hint { font-weight: 600; letter-spacing: 0.04em; text-transform: none; color: var(--dim); font-size: 12px; margin-left: 0.8em; }
+    .field > label .hint { margin-left: 0; }
+    fieldset { border: 0; padding: 0; margin: 14px 0 0; min-width: 0; }
+
+    input[type="text"], input[type="number"], select {
+      width: 100%; padding: 9px 11px;
+      background: var(--sunk); color: var(--cream);
+      border: 1px solid var(--line); border-radius: 3px;
+      font: 500 14.5px/1.3 var(--ui);
+    }
+    input::placeholder, textarea::placeholder { color: rgba(157, 179, 200, 0.55); }
+    select { appearance: none; padding-right: 26px; background-image: linear-gradient(45deg, transparent 50%, var(--slate) 50%), linear-gradient(135deg, var(--slate) 50%, transparent 50%); background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+
+    /* The names, with a gutter that numbers each line and says its colour. */
+    .names {
+      display: grid; grid-template-columns: 74px 1fr;
+      background: var(--sunk); border: 1px solid var(--line); border-radius: 3px;
+      overflow: hidden;
+    }
+    .names:focus-within { border-color: rgba(232, 168, 184, 0.6); }
+    .gutter {
+      overflow: hidden; padding: 8px 0; background: rgba(0, 0, 0, 0.18);
+      border-right: 1px solid var(--line);
+      font: 600 12px/24px var(--mono); color: var(--dim);
+      user-select: none;
+    }
+    .gutter .g { height: 24px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding-right: 8px; white-space: nowrap; }
+    .gutter .g .chip { width: 9px; height: 9px; border-radius: 2px; flex: none; box-shadow: 0 0 0 1px rgba(11, 17, 22, 0.8); }
+    .gutter .g .dup { color: var(--amber); font-size: 11px; }
+    .gutter .g.extra { color: var(--danger); }
+    .gutter .g.extra .n { text-decoration: line-through; }
+    #names {
+      display: block; width: 100%; height: clamp(120px, 27vh, 288px); margin: 0; padding: 8px 10px;
+      resize: none; border: 0; outline: 0; background: transparent; color: var(--cream);
+      font: 500 15px/24px var(--ui); white-space: pre; overflow: auto; tab-size: 4;
+      scrollbar-width: thin; scrollbar-color: rgba(232, 168, 184, 0.4) transparent;
+    }
+    .names-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin-top: 7px; font-size: 12.5px; color: var(--slate); }
+    #count { font: 700 13px/1 var(--mono); color: var(--cream); }
+    #count.full { color: var(--danger); }
+    .tickets { display: inline-flex; align-items: center; gap: 6px; }
+    .tickets input { width: 56px; padding: 4px 6px; font: 600 12.5px/1.2 var(--mono); }
+    .offer {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; padding: 8px 10px;
+      border: 1px solid var(--edge); background: rgba(232, 168, 184, 0.08); font-size: 12.5px;
+    }
+    .odds { margin: 10px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--cream); }
+    .odds li + li { margin-top: 3px; color: var(--slate); }
+    .warn { margin: 8px 0 0; font-size: 12.5px; font-weight: 600; color: var(--danger); }
+
+    /* Length and winners: two segmented controls that are radio groups. */
+    .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+    .seg label { position: relative; margin: 0; }
+    .seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+    .seg span {
+      display: block; min-width: 54px; padding: 8px 14px; text-align: center;
+      font: 700 13px/1.1 var(--mono); color: var(--slate); background: var(--sunk);
+      border-right: 1px solid var(--line);
+    }
+    .seg label:last-child span { border-right: 0; }
+    .seg input:checked + span { background: var(--sakura); color: var(--deep); }
+    .seg input:focus-visible + span { outline: 2px solid var(--sakura); outline-offset: 2px; }
+    .seg input:disabled + span { opacity: 0.35; cursor: default; }
+    .row2 { display: flex; flex-wrap: wrap; gap: 14px 24px; }
+
+    /* Sponsor logos: four slots. */
+    .slots { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .slot {
+      position: relative; min-height: 92px; padding: 8px;
+      display: flex; flex-direction: column; justify-content: space-between; gap: 6px;
+      border: 1px dashed rgba(157, 179, 200, 0.4); background: var(--sunk); border-radius: 3px;
+    }
+    .slot.over { border-color: var(--mint); background: rgba(125, 255, 180, 0.08); }
+    .slot.filled { border-style: solid; border-color: var(--line); }
+    .slot .drop { display: flex; flex: 1; align-items: center; justify-content: center; text-align: center; font-size: 12px; color: var(--slate); cursor: pointer; }
+    .slot .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    .slot .drop:focus-within { outline: 2px solid var(--sakura); outline-offset: 2px; }
+    .slot .thumb { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .slot .thumb img { width: 52px; height: 34px; object-fit: contain; background: rgba(243, 234, 212, 0.9); border-radius: 2px; flex: none; }
+    .slot .thumb .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--cream); }
+    .slot .kill { position: absolute; right: 4px; top: 4px; padding: 2px 7px; font-size: 14px; line-height: 1; }
+    .slot select { padding: 4px 22px 4px 8px; font-size: 12px; }
+    .slot .err { color: var(--danger); font-size: 11.5px; line-height: 1.3; }
+
+    /* The arm switch: mint, the way a radio's is. One press. */
+    .armbar {
+      position: sticky; bottom: 0; z-index: 2;
+      margin: 16px -20px -18px; padding: 12px 20px 14px;
+      background: linear-gradient(to bottom, rgba(16, 22, 17, 0), rgba(16, 22, 17, 0.94) 28%);
+    }
+    .arm {
+      appearance: none; width: 100%; margin: 0; padding: 0 18px 0 14px; height: 66px;
+      display: flex; align-items: center; gap: 14px; text-align: left; cursor: pointer;
+      border: 0; border-radius: 3px;
+      background: var(--mint); color: var(--deep);
+      box-shadow: 0 0 0 2px var(--ink), 4px 5px 0 1px rgba(11, 17, 22, 0.55);
+      transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+    }
+    .arm:hover:not([disabled]) { filter: brightness(1.06); }
+    .arm:active:not([disabled]) { transform: translate(2px, 3px); box-shadow: 0 0 0 2px var(--ink), 2px 2px 0 1px rgba(11, 17, 22, 0.55); }
+    .arm .switch { position: relative; flex: none; width: 46px; height: 24px; border-radius: 12px; background: rgba(11, 17, 22, 0.78); }
+    .arm .switch::after { content: ""; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--mint); transition: transform 180ms cubic-bezier(0.5, 0, 0.2, 1); }
+    .arm.go .switch::after, .arm:active:not([disabled]) .switch::after { transform: translateX(22px); }
+    .arm b { display: block; font: 800 16px/1.1 var(--ui); letter-spacing: 0.14em; text-transform: uppercase; }
+    .arm small { display: block; margin-top: 3px; font: 600 12px/1.2 var(--ui); opacity: 0.78; }
+    .arm[disabled] { cursor: default; background: #46544b; color: rgba(243, 234, 212, 0.62); box-shadow: 0 0 0 2px var(--ink); }
+    .arm[disabled] .switch { background: rgba(11, 17, 22, 0.5); }
+    .arm[disabled] .switch::after { background: #6c7a70; }
+    .status { margin: 8px 0 0; min-height: 1.4em; font-size: 12.5px; color: var(--slate); }
+    .status.bad { color: var(--danger); font-weight: 600; }
+
+    .more { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); display: grid; gap: 12px; }
+    .more details { border: 1px solid var(--line); background: var(--sunk); }
+    .more summary { cursor: pointer; padding: 9px 12px; font: 700 12px/1.2 var(--ui); letter-spacing: 0.1em; text-transform: uppercase; color: var(--slate); }
+    .more details[open] summary { color: var(--cream); border-bottom: 1px solid var(--line); }
+    .more .links { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+    .log { margin: 0; padding: 0; list-style: none; max-height: 260px; overflow: auto; }
+    .log li { padding: 9px 12px; border-top: 1px solid var(--line); display: grid; gap: 4px; font-size: 12.5px; }
+    .log li:first-child { border-top: 0; }
+    .log .when { color: var(--dim); font: 600 11.5px/1.2 var(--mono); }
+    .log .fp { color: var(--amber); font: 700 13px/1.2 var(--mono); }
+    .log .who { color: var(--cream); }
+    .log .acts { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+    .log-empty, .log-foot { padding: 9px 12px; font-size: 12.5px; color: var(--dim); }
+    .log-foot { border-top: 1px solid var(--line); }
+    .private { margin: 0; font-size: 12px; color: var(--dim); }
+    .private b { color: var(--slate); font-weight: 600; }
+
+    /* Under 900 px the sheet is a bottom sheet, and the field has the top of the window. */
+    @media (max-width: 900px) {
+      :root { --bar: 48px; }
+      .bar { padding: 0 12px; }
+      .wordmark { font-size: 24px; }
+      .wordmark .r { display: none; }
+      .sheet {
+        left: 0; right: 0; bottom: 0; top: auto; width: auto; max-height: 66vh; max-height: 66dvh;
+        padding: 14px 14px max(18px, env(safe-area-inset-bottom));
+        box-shadow: inset 0 0 0 1px rgba(244, 236, 214, 0.10), 0 -2px 0 0 var(--ink), 0 -3px 0 0 rgba(247, 240, 220, 0.32);
+      }
+      body:not([data-state="setup"]):not([data-state="loading"]) .sheet { transform: translateY(112%); }
+      #names { height: 168px; }
+      .slots { grid-template-columns: 1fr 1fr; }
+      .armbar { margin: 14px -14px -18px; padding: 12px 14px max(14px, env(safe-area-inset-bottom)); }
+      .empty-note { top: 22%; left: 50%; }
+      .controls .btn { padding: 7px 10px; }
+    }
+
+    /* ---------------------------------------------------------------
+       The race overlay. Everything is sized in --s, so a projector gets
+       it larger by one number (present mode), and everything is inked,
+       because a soft shadow only works over a dark world.
+       --------------------------------------------------------------- */
+    .hud { position: fixed; inset: 0; z-index: 5; pointer-events: none; user-select: none; font-variant-numeric: tabular-nums; }
+    body[data-state="results"] .hud, body[data-state="unsupported"] .hud { display: none; }
+    /* On the sheet the overlay is the names over the quads, and nothing else of it. */
+    body[data-state="setup"] .hud > :not(.tags), body[data-state="loading"] .hud > :not(.tags) { display: none; }
+    .osd-top {
+      position: absolute; left: 50%; top: calc(14 * var(--s)); transform: translateX(-50%);
+      text-align: center; text-shadow: var(--osd-edge);
+    }
+    .osd-label { font-size: calc(11 * var(--s)); letter-spacing: 0.16em; text-transform: uppercase; color: var(--osd-slate); min-height: 1.2em; }
+    .osd-timer { font-size: calc(46 * var(--s)); font-weight: 600; letter-spacing: 0.02em; line-height: 1; text-shadow: var(--osd-edge-2); }
+    .osd-lap { margin-top: calc(3 * var(--s)); font-size: calc(15 * var(--s)); color: var(--osd-slate); letter-spacing: 0.06em; min-height: 1.3em; }
+    body[data-state="race"] .osd-lap.final, body[data-state="finish"] .osd-lap.final { color: var(--amber); }
+
+    .tower {
+      position: absolute; left: calc(18 * var(--s)); top: calc(18 * var(--s));
+      margin: 0; padding: 0; list-style: none;
+      width: calc(250 * var(--s)); height: calc(11 * 28 * var(--s));
+      --row: calc(28 * var(--s));
+    }
+    .tower .row {
+      position: absolute; left: 0; top: 0; width: 100%; height: var(--row);
+      display: grid; grid-template-columns: 2.4em 1.1em 1fr auto; align-items: center; gap: calc(6 * var(--s));
+      padding: 0 calc(10 * var(--s));
+      background: var(--panel); border-top: 2px solid var(--edge); box-shadow: inset 0 0 0 1px var(--line);
+      font-size: calc(14 * var(--s)); text-shadow: var(--osd-edge);
+      transition: transform 260ms cubic-bezier(0.3, 0.7, 0.2, 1);
+      will-change: transform;
+    }
+    .tower .row.arrive { transition: none; }
+    .tower .pl { font: 700 calc(14 * var(--s)) var(--mono); color: var(--osd-slate); text-align: right; }
+    .tower .chip, .tag .chip { width: calc(9 * var(--s)); height: calc(9 * var(--s)); border-radius: 2px; box-shadow: 0 0 0 1px rgba(11, 17, 22, 0.85); background: var(--slate); }
+    .tower .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+    .tower .gp { font: 600 calc(12.5 * var(--s)) var(--mono); color: var(--osd-slate); }
+    .tower .rest .nm { color: var(--osd-slate); font-style: normal; font-weight: 500; }
+    .tower .rest .chip { visibility: hidden; }
+
+    .tags { position: absolute; inset: 0; overflow: hidden; }
+    .tag {
+      position: absolute; left: 0; top: 0;
+      display: flex; align-items: center; gap: calc(5 * var(--s));
+      padding: calc(2 * var(--s)) calc(7 * var(--s));
+      background: rgba(11, 17, 22, 0.55); border-radius: 2px;
+      font-size: calc(13 * var(--s)); line-height: 1.25; white-space: nowrap; text-shadow: var(--osd-edge);
+      max-width: calc(170 * var(--s));
+      will-change: transform;
+    }
+    .tag b { font: 700 calc(12.5 * var(--s)) var(--mono); color: var(--amber); }
+    .tag span { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+
+    .beat {
+      position: absolute; left: 50%; top: calc(112 * var(--s)); transform: translateX(-50%);
+      max-width: 90vw; text-align: center; white-space: nowrap;
+      font-size: calc(30 * var(--s)); font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase;
+      color: var(--amber); text-shadow: var(--osd-edge-2); opacity: 0; overflow: hidden; text-overflow: ellipsis;
+    }
+    .beat.on { animation: beat 2400ms ease both; }
+    @keyframes beat {
+      0% { opacity: 0; transform: translateX(-50%) translateY(calc(8 * var(--s))); }
+      10% { opacity: 1; transform: translateX(-50%) translateY(0); }
+      82% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    .chip-seal {
+      position: absolute; right: calc(18 * var(--s)); top: calc(var(--bar) + 4px);
+      appearance: none; margin: 0; padding: calc(7 * var(--s)) calc(12 * var(--s));
+      display: grid; gap: calc(2 * var(--s)); text-align: right; pointer-events: auto;
+      background: var(--panel); border: 0; border-top: 2px solid var(--edge); box-shadow: inset 0 0 0 1px var(--line);
+      color: var(--cream); cursor: default;
+      transition: opacity 300ms ease;
+    }
+    .chip-seal .k { font: 700 calc(10 * var(--s)) var(--ui); letter-spacing: 0.18em; text-transform: uppercase; color: var(--sakura); }
+    .chip-seal .v { font: 700 calc(15 * var(--s)) var(--mono); color: var(--amber); text-shadow: var(--osd-edge); letter-spacing: 0.04em; }
+    .chip-seal.replay .k { color: var(--mint); }
+
+    /* The seal, slapped on the glass: the landing page's keyframes, which are an impact and not a transition. */
+    .seal {
+      position: absolute; left: 50%; top: 44%; translate: -50% -50%;
+      display: grid; gap: calc(10 * var(--s)); justify-items: center; text-align: center;
+      padding: calc(22 * var(--s)) calc(34 * var(--s));
+      background: var(--paper); color: var(--ink);
+      border: calc(5 * var(--s)) solid var(--ink); box-shadow: calc(8 * var(--s)) calc(9 * var(--s)) 0 0 rgba(11, 17, 22, 0.55);
+      max-width: 92vw;
+    }
+    .seal .k { font: 800 calc(14 * var(--s)) var(--ui); letter-spacing: 0.24em; text-transform: uppercase; color: #8d3e55; }
+    .seal .print { font: 800 calc(56 * var(--s)) var(--mono); letter-spacing: 0.06em; line-height: 1; color: var(--ink); }
+    .seal .full { font: 600 calc(11 * var(--s)) var(--mono); letter-spacing: 0.04em; color: #3b4a52; word-break: break-all; max-width: calc(520 * var(--s)); }
+    .seal .note { font: 600 calc(13 * var(--s)) var(--ui); color: #3b4a52; }
+    .seal.replay .k { color: #1f6b49; }
+    .seal.slap { animation: slap 700ms both; }
+    @keyframes slap {
+      0% { opacity: 0; transform: rotate(8deg) scale(1.85); filter: drop-shadow(0 24px 22px rgba(0, 0, 0, 0.5)); animation-timing-function: cubic-bezier(0.55, 0, 0.9, 0.42); }
+      18% { opacity: 1; }
+      46% { transform: rotate(-1.6deg) scale(0.93); filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.5)); animation-timing-function: cubic-bezier(0.22, 0.86, 0.3, 1); }
+      64% { transform: rotate(0.6deg) scale(1.045); }
+      82% { transform: rotate(0deg) scale(0.99); }
+      100% { opacity: 1; transform: rotate(0deg) scale(1); filter: drop-shadow(0 4px 5px rgba(0, 0, 0, 0.5)); }
+    }
+
+    .replay-flag {
+      position: absolute; left: 50%; bottom: calc(26 * var(--s)); transform: translateX(-50%);
+      padding: calc(4 * var(--s)) calc(16 * var(--s));
+      font: 800 calc(20 * var(--s)) var(--ui); letter-spacing: 0.32em; text-transform: uppercase;
+      background: var(--mint); color: var(--deep); border: calc(2 * var(--s)) solid var(--ink);
+    }
+
+    .hud-skip {
+      position: absolute; right: calc(18 * var(--s)); bottom: calc(20 * var(--s)); pointer-events: auto;
+      appearance: none; padding: calc(8 * var(--s)) calc(16 * var(--s));
+      background: rgba(16, 22, 17, 0.78); color: var(--slate); border: 1px solid var(--line);
+      font: 700 calc(12.5 * var(--s)) var(--ui); letter-spacing: 0.08em; cursor: pointer;
+    }
+    .hud-skip:hover { color: var(--cream); border-color: rgba(232, 168, 184, 0.55); }
+
+    /* A phone: the tower under the clock, the beat low, the chip at the foot. After every rule it overrides, because the later of two equal rules wins. */
+    @media (max-width: 700px) {
+      .tower { width: calc(190 * var(--s)); left: calc(8 * var(--s)); top: calc(var(--bar) + 54 * var(--s)); }
+      .osd-timer { font-size: calc(34 * var(--s)); }
+      .osd-top { top: calc(8 * var(--s)); }
+      .beat { top: auto; bottom: calc(96 * var(--s)); font-size: calc(24 * var(--s)); letter-spacing: 0.1em; }
+      .chip-seal { right: auto; left: calc(8 * var(--s)); top: auto; bottom: calc(18 * var(--s)); text-align: left; }
+      .replay-flag { bottom: calc(60 * var(--s)); }
+    }
+
+    /* Present mode: fullscreen, the chrome gone, the overlay sized for a projector, the pointer hidden when idle. */
+    body.present { --s: 0.17vmin; }
+    body.present .bar .wordmark, body.present .sheet { display: none; }
+    body.present .controls { opacity: 0; transition: opacity 300ms ease; }
+    body.present .controls:hover, body.present .controls:focus-within { opacity: 1; }
+
+    /* ---------------------------------------------------------------
+       The results: a manga page, the way the simulator's is, and the front
+       door's first screen. Paper, ink, gutters that lean; the big panel
+       is a hole in the paper with the world's own canvas behind it. All
+       of it is sized in --u, a hundredth of the short side.
+       --------------------------------------------------------------- */
+    .results {
+      position: fixed; inset: 0; z-index: 30; overflow-x: hidden; overflow-y: auto;
+      --u: 9px; --pg: 20px; --pb: 6px; --pm: 31px;
+      color: var(--cream); font-size: max(12px, calc(var(--u) * 1.55));
+      scrollbar-width: thin;
+    }
+    .results[data-shape="spread"] { overflow-y: hidden; }
+    .page-ink { position: absolute; left: 0; top: 0; pointer-events: none; }
+    .page-paper { fill: var(--paper); }
+    .page-lines { fill: none; stroke: var(--ink); stroke-linejoin: round; stroke-linecap: round; }
+    .rp {
+      position: absolute; overflow: hidden;
+      --padl: calc(var(--pg) * 0.9 + max(var(--lean-tl, 0px), var(--lean-bl, 0px)));
+      --padr: calc(var(--pg) * 0.9 + max(var(--lean-tr, 0px), var(--lean-br, 0px)));
+    }
+    .rp.dark { background: rgba(16, 22, 17, 0.97); border-top: 0; }
+    .rp.dark::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: calc(var(--pb) * 0.7); background: rgba(232, 168, 184, 0.5); }
+    .rp .in {
+      position: absolute; inset: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(232, 168, 184, 0.45) transparent;
+      padding: calc(var(--u) * 1.6) var(--padr) calc(var(--u) * 1.4) var(--padl);
+    }
+    .rp h2 { font-size: max(22px, calc(var(--u) * 3.1)); margin-bottom: calc(var(--u) * 0.8); }
+    .rp .kick { font-size: max(10px, calc(var(--u) * 1.05)); font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--sakura); }
+
+    .rp.big { background: transparent; }
+    .rp.big canvas.shot, .rp.big canvas.focus { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    /* With no field to draw there is no picture: the panel is paper, with the focus lines and the name on it, and the name is inked to be read on paper. */
+    .rp.big.plain { background: var(--paper); }
+    .rp.big.plain .winner-name { color: #1f6b49; }
+    .narration {
+      position: absolute; left: calc(var(--lean-tl, 0px) + var(--u) * 1.6); top: calc(var(--u) * 1.5);
+      padding: calc(var(--u) * 0.55) calc(var(--u) * 1.3);
+      background: var(--paper); color: var(--ink); border: var(--pb) solid var(--ink);
+      font-size: max(11px, calc(var(--u) * 1.35)); font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
+      box-shadow: calc(var(--u) * 0.5) calc(var(--u) * 0.55) 0 0 rgba(11, 17, 22, 0.45);
+    }
+    .narration.replay { background: var(--mint); }
+    .rp.big .event-title {
+      position: absolute; right: calc(var(--lean-tr, 0px) + var(--u) * 1.6); top: calc(var(--u) * 1.5);
+      max-width: 46%; text-align: right; color: var(--cream);
+      font-size: max(22px, calc(var(--u) * 3.4));
+    }
+    .rp.big.plain .event-title { color: #8d3e55; }
+    .winner-name {
+      position: absolute; left: calc(var(--lean-bl, 0px) + var(--u) * 1.6); right: calc(var(--lean-br, 0px) + var(--u) * 1.6); bottom: calc(var(--u) * 1.2);
+      font-size: max(34px, calc(var(--u) * 8.6)); color: var(--mint); max-width: 100%;
+    }
+    .place-card { display: grid; align-content: center; justify-items: start; gap: calc(var(--u) * 0.4); height: 100%; }
+    .place-card .ord { font-size: max(26px, calc(var(--u) * 4)); }
+    .place-card .nm { font-weight: 800; font-size: max(14px, calc(var(--u) * 2.3)); line-height: 1.1; overflow-wrap: anywhere; }
+    .place-card .gap { font: 600 max(11.5px, calc(var(--u) * 1.35)) var(--mono); color: var(--slate); }
+    .swatch { display: inline-block; width: calc(var(--u) * 1.1); height: calc(var(--u) * 1.1); border-radius: 2px; box-shadow: 0 0 0 1px rgba(11, 17, 22, 0.85); vertical-align: -0.1em; margin-right: 0.45em; }
+
+    .order { margin: 0; padding: 0; list-style: none; display: grid; gap: 1px; }
+    .order li { display: grid; grid-template-columns: 2.6em 1.2em 1fr auto; align-items: center; gap: 0.5em; padding: calc(var(--u) * 0.32) 0; border-top: 1px solid var(--line); }
+    .order li:first-child { border-top: 0; }
+    .order .p { font: 700 1em var(--mono); color: var(--slate); text-align: right; }
+    .order .n { font-weight: 600; overflow-wrap: anywhere; }
+    .order .t { font: 600 0.9em var(--mono); color: var(--slate); }
+    .order li.won .p, .order li.won .n { color: var(--mint); }
+    .order li.won .n { font-weight: 800; }
+    .order .e { font: 600 0.85em var(--mono); color: var(--dim); }
+
+    .seal-panel dl { margin: 0; display: grid; gap: calc(var(--u) * 0.7); }
+    .seal-panel dt { font-size: max(10px, calc(var(--u) * 1)); font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--slate); }
+    .seal-panel dd { margin: calc(var(--u) * 0.15) 0 0; }
+    .seal-panel .print { font: 800 max(20px, calc(var(--u) * 3.1)) var(--mono); letter-spacing: 0.05em; color: var(--amber); }
+    .seal-panel .hex { font: 600 max(10.5px, calc(var(--u) * 1.12)) var(--mono); color: var(--cream); overflow-wrap: anywhere; letter-spacing: 0.02em; }
+    .tick { display: flex; gap: 0.6em; align-items: flex-start; font-weight: 600; color: var(--mint); }
+    .tick.bad { color: var(--danger); }
+    .tick svg { flex: none; width: 1.3em; height: 1.3em; margin-top: 0.05em; }
+    .btns { display: flex; flex-wrap: wrap; gap: calc(var(--u) * 0.7); margin-top: calc(var(--u) * 0.9); }
+    .results .btn { font-size: max(11.5px, calc(var(--u) * 1.3)); padding: calc(var(--u) * 0.75) calc(var(--u) * 1.4); }
+    .results .btn.primary { background: var(--mint); border-color: var(--mint); color: var(--deep); font-weight: 800; }
+    .results .btn.primary:hover { background: var(--mint); filter: brightness(1.07); color: var(--deep); }
+    .acts { display: grid; gap: calc(var(--u) * 0.8); align-content: start; }
+    .acts .btn { justify-content: flex-start; text-align: left; width: 100%; }
+    .acts .sub { display: block; font-weight: 500; font-size: 0.86em; opacity: 0.75; letter-spacing: 0; }
+    .results .replay-line { margin: 0 0 calc(var(--u) * 0.8); padding: calc(var(--u) * 0.45) calc(var(--u) * 1); background: var(--mint); color: var(--deep); font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase; font-size: max(11px, calc(var(--u) * 1.2)); display: inline-block; }
+    .results .foot-line { margin-top: calc(var(--u) * 0.9); font-size: max(10.5px, calc(var(--u) * 1.1)); color: var(--dim); }
+
+    /* ---------------------------------------------------------------
+       Forced colours is a person asking for the system's own text, so they
+       get it: the drawing goes and the words come back.
+       --------------------------------------------------------------- */
+    @media (forced-colors: active) {
+      .is-lettered { -webkit-text-fill-color: currentColor; }
+      .lettered-art { display: none; }
+      .arm { border: 2px solid ButtonText; }
+    }
+
+    /* ---------------------------------------------------------------
+       The reduced motion contract. The other half is REDUCED in
+       src/app.js, and the two agree: no slap (the chip appears in place),
+       no aerial descent and no glides (the show cuts between still
+       positions), nothing that fades or slides, and a prominent "Skip to
+       the result". Nothing that carries meaning is hidden.
+       --------------------------------------------------------------- */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.001ms !important; animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important; scroll-behavior: auto !important;
+      }
+      .beat.on { opacity: 1; }
+      .hud-skip { padding: calc(12 * var(--s)) calc(24 * var(--s)); font-size: calc(16 * var(--s)); background: var(--mint); color: var(--deep); border-color: var(--ink); }
+    }
+  </style>
+</head>
+<body data-state="loading">
+  <a class="skip" href="#names">Skip to the names</a>
+
+  <canvas id="view" aria-hidden="true"></canvas>
+
+  <header class="bar">
+    <h1 class="wordmark" aria-label="WebFPV Race Name Picker"><span class="w">WEB</span><span class="f">FPV</span> <span class="r">Race Name Picker</span></h1>
+    <div class="controls">
+      <button class="btn" id="sound" type="button" aria-pressed="false" hidden>Sound off</button>
+      <button class="btn" id="present" type="button" aria-pressed="false" title="Fullscreen, the page's own controls hidden (F)">Present</button>
+    </div>
+  </header>
+
+  <p class="empty-note" id="empty-note">Type names to fill the grid</p>
+
+  <main class="sheet" id="sheet" aria-labelledby="sheet-title">
+    <div class="eyebrow">Race name picker</div>
+    <h2 class="lettered" id="sheet-title">Set the grid</h2>
+    <p class="lede">The result is drawn first and sealed. Then the quads race, and finish in exactly the order that was drawn.</p>
+
+    <div class="field">
+      <label for="event-title">Event title <span class="hint">optional, on the gantry</span></label>
+      <input type="text" id="event-title" maxlength="40" autocomplete="off" placeholder="Friday night heat">
+    </div>
+
+    <div class="field">
+      <label for="names">Names <span class="hint">one per line</span></label>
+      <div class="names">
+        <div class="gutter" id="gutter" aria-hidden="true"></div>
+        <textarea id="names" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="count odds"
+          placeholder="Sam&#10;Ana&#10;Raj&#10;..."></textarea>
+      </div>
+      <div class="names-foot">
+        <span><span id="count">0 of 50</span> <span id="count-note"></span></span>
+        <span class="tickets">
+          <label for="tickets-n" class="vh">How many numbered tickets</label>
+          Numbers 1 to
+          <input type="number" id="tickets-n" min="2" max="50" value="10" inputmode="numeric">
+          <button class="text" id="tickets-fill" type="button">Fill</button>
+        </span>
+      </div>
+      <div class="offer" id="split-offer" role="group" aria-label="Split a comma separated list" hidden>
+        <span>That looks like a comma separated list.</span>
+        <button class="btn small" id="split-yes" type="button">Split into lines</button>
+        <button class="text" id="split-no" type="button">Keep as one line</button>
+      </div>
+      <ul class="odds" id="odds" aria-live="polite"></ul>
+      <p class="warn" id="warn" role="alert" hidden></p>
+    </div>
+
+    <div class="row2">
+      <fieldset>
+        <legend class="label">Length</legend>
+        <div class="seg" role="radiogroup" aria-label="Length of the race">
+          <label><input type="radio" name="length" value="15"><span>15 s</span></label>
+          <label><input type="radio" name="length" value="30" checked><span>30 s</span></label>
+          <label><input type="radio" name="length" value="60"><span>60 s</span></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="label">Winners</legend>
+        <div class="seg" role="radiogroup" aria-label="Number of winners">
+          <label><input type="radio" name="winners" value="1" checked><span>1</span></label>
+          <label><input type="radio" name="winners" value="2"><span>2</span></label>
+          <label><input type="radio" name="winners" value="3"><span>3</span></label>
+        </div>
+      </fieldset>
+    </div>
+
+    <fieldset>
+      <legend class="label">Sponsor logos <span class="hint">stay in this browser</span></legend>
+      <div class="slots" id="slots"></div>
+    </fieldset>
+
+    <div class="armbar">
+      <button class="arm" id="arm" type="button" disabled>
+        <span class="switch" aria-hidden="true"></span>
+        <span><b>Arm and race</b><small>Seals the draw, then flies it</small></span>
+      </button>
+      <p class="status" id="status" role="status" aria-live="polite">Building the field.</p>
+    </div>
+
+    <div class="more">
+      <details id="log-box">
+        <summary>Draws in this browser <span id="log-count"></span></summary>
+        <ol class="log" id="log"></ol>
+        <div class="log-foot"><span id="log-foot"></span> <button class="text" id="log-clear" type="button">Clear this list</button></div>
+      </details>
+      <div class="links">
+        <a class="text" href="https://github.com/Mathew-Harvey/QuadRaceRandomNamePicker/blob/main/RANDOMNESS.md" rel="noopener">How the draw works</a>
+        <a class="text" href="verify.html">Verify a draw</a>
+        <a class="text" href="https://github.com/Mathew-Harvey/QuadRaceRandomNamePicker/blob/main/src/draw.js" rel="noopener">The draw, in one file</a>
+      </div>
+      <p class="private"><b>Names and logos never leave this browser.</b> There is no server, no counter and nothing to sign in to. <button class="text" id="forget" type="button">Forget this browser's lists</button></p>
+    </div>
+  </main>
+
+  <div class="hud" id="hud">
+    <div class="osd-top">
+      <div class="osd-label" id="hud-label"></div>
+      <div class="osd-timer" id="hud-clock">0:00.00</div>
+      <div class="osd-lap" id="hud-lap"></div>
+    </div>
+    <ol class="tower" id="hud-tower" aria-label="Timing tower"></ol>
+    <div class="tags" id="hud-tags" aria-hidden="true"></div>
+    <div class="beat" id="hud-beat" aria-hidden="true"></div>
+    <button class="chip-seal" id="hud-chip" type="button" hidden>
+      <span class="k">Sealed</span>
+      <span class="v" id="hud-chip-text"></span>
+    </button>
+    <div class="seal" id="hud-seal" hidden>
+      <div class="k">Sealed before the start</div>
+      <div class="print" id="hud-seal-print"></div>
+      <div class="full" id="hud-seal-full"></div>
+      <div class="note">The draw is made. Nothing the race does can change it.</div>
+    </div>
+    <div class="replay-flag" id="hud-replay" hidden>Replay</div>
+    <button class="hud-skip" id="hud-skip" type="button" hidden>Skip to the result</button>
+  </div>
+  <div class="vh" id="live" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
