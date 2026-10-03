@@ -1,0 +1,271 @@
+<!doctype html>
+<!--
+  race-chart.html: a development page. A plan drawn as a chart, one line per
+  quad, so the drama can be tuned by eye. Not linked from the picker.
+
+  The horizontal axis is race time. The vertical axis is how far behind the
+  leader each quad is, in metres or in seconds, so the leader is the line along
+  the top and a lead change is two lines swapping places there. The winner is
+  mint, the runner up that the story is about is amber, and everybody else
+  recedes. Vertical rules mark half distance, two thirds, and the finishing
+  times of the first three places.
+
+  The order and the show seed come out of the real draw, src/draw.js, for the
+  seed typed in, so this is the race the picker would fly for that seed and
+  not a stand in for it. The numbers under the chart are measure() from
+  src/choreo.js, the same measurement tests/choreo.test.js asserts on.
+
+  This is a dev tool and not the picker, so it may ask the draw module for a
+  seeded draw, which the live page may not.
+
+  This file is part of the WebFPV Race Name Picker.
+
+  The WebFPV Race Name Picker is free software: you can redistribute it
+  and/or modify it under the terms of the GNU General Public License as
+  published by the Free Software Foundation, either version 3 of the
+  License, or (at your option) any later version.
+
+  The WebFPV Race Name Picker is distributed in the hope that it will be
+  useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+  General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with the WebFPV Race Name Picker. If not, see
+  <https://www.gnu.org/licenses/>.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Race chart</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --cream: #f3ead4; --sakura: #e8a8b8; --amber: #ffd45c; --mint: #7dffb4; --slate: #9db3c8; --deep: #141c16; --line: rgba(244, 236, 214, 0.14); --ui: system-ui, sans-serif; --mono: ui-monospace, Menlo, Consolas, monospace; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--deep); color: var(--cream); font: 14px/1.5 var(--ui); }
+  main { width: min(1180px, 96vw); margin: 0 auto; padding: 18px 0 40px; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  p.lede { margin: 0 0 14px; color: var(--slate); }
+  form { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; margin-bottom: 12px; }
+  label { display: grid; gap: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--sakura); }
+  select, input, button { font: 13px var(--mono); background: #0e140f; color: var(--cream); border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; }
+  input#seed { width: 36em; max-width: 90vw; }
+  button { cursor: pointer; color: var(--deep); background: var(--mint); border-color: var(--mint); font-weight: 700; }
+  button.plain { background: transparent; color: var(--cream); border-color: var(--line); }
+  :focus-visible { outline: 2px solid var(--sakura); outline-offset: 2px; }
+  canvas { width: 100%; background: #0e140f; border: 1px solid var(--line); border-radius: 4px; display: block; }
+  table { border-collapse: collapse; margin-top: 12px; font: 12px var(--mono); }
+  td, th { padding: 3px 12px 3px 0; text-align: left; border-bottom: 1px solid var(--line); }
+  th { color: var(--sakura); font-weight: 600; }
+  .ok { color: var(--mint); }
+  .bad { color: #ff8f8f; }
+  #legend { color: var(--slate); font-size: 12px; margin: 6px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Race chart</h1>
+  <p class="lede">One line per quad: how far behind the leader, against race time. Change the seed, the size or the story and look.</p>
+  <form id="controls">
+    <label>Names<select id="count"><option>2</option><option>3</option><option>5</option><option>12</option><option>23</option><option selected>50</option></select></label>
+    <label>Length<select id="length"><option value="15">15 s</option><option value="30" selected>30 s</option><option value="60">60 s</option></select></label>
+    <label>Story<select id="story"><option value="">drawn</option><option>wire</option><option>surge</option><option>comeback</option><option>clip</option></select></label>
+    <label>Photo finish<select id="photo"><option value="">drawn</option><option value="1">yes</option><option value="0">no</option></select></label>
+    <label>Axis<select id="axis"><option value="m">metres behind</option><option value="s">seconds behind</option></select></label>
+    <label>Seed, 64 hex digits<input id="seed" spellcheck="false" autocomplete="off"></label>
+    <button type="button" id="next">Next seed</button>
+    <button type="button" id="fresh" class="plain">A fresh draw</button>
+  </form>
+  <canvas id="chart" width="2200" height="900" role="img" aria-label="A chart of how far each quad is behind the leader against race time"></canvas>
+  <p id="legend"></p>
+  <table id="numbers"></table>
+</main>
+
+<script type="module">
+import { derive, drawLive, drawWithSeed, fromHex, toHex } from '../src/draw.js';
+import { makePlan, measure, STORYLINES } from '../src/choreo.js';
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('chart');
+const ctx = canvas.getContext('2d');
+const START = '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';
+$('seed').value = new URLSearchParams(location.search).get('seed') || START;
+for (const key of ['count', 'length', 'story', 'photo', 'axis']) {
+  const v = new URLSearchParams(location.search).get(key);
+  if (v) {
+    $(key).value = v;
+  }
+}
+
+/* The seed as a number, so that Next steps through races in order. */
+function bump(hex) {
+  const bytes = fromHex(hex, 32);
+  for (let i = 31; i >= 0; i -= 1) {
+    bytes[i] = (bytes[i] + 1) & 255;
+    if (bytes[i] !== 0) {
+      break;
+    }
+  }
+  return toHex(bytes);
+}
+
+function flight(plan, axis) {
+  const n = plan.count;
+  const steps = Math.ceil(plan.duration * 20);
+  const lines = Array.from({ length: n }, () => new Float64Array(steps + 1));
+  let peak = 1;
+  for (let k = 0; k <= steps; k += 1) {
+    const t = (k / steps) * plan.duration;
+    let lead = -1e9;
+    const s = new Float64Array(n);
+    for (let i = 0; i < n; i += 1) {
+      s[i] = plan.curves[i].s(t);
+      lead = Math.max(lead, s[i]);
+    }
+    for (let i = 0; i < n; i += 1) {
+      const behind = lead - s[i];
+      const value = axis === 's' ? behind / Math.max(plan.curves[i].v(t), 1) : behind;
+      lines[i][k] = value;
+      peak = Math.max(peak, value);
+    }
+  }
+  return { lines, steps, peak };
+}
+
+function draw(plan, axis) {
+  const { lines, steps, peak } = flight(plan, axis);
+  const W = canvas.width;
+  const H = canvas.height;
+  const pad = { l: 90, r: 24, t: 24, b: 56 };
+  ctx.clearRect(0, 0, W, H);
+  const x = (t) => pad.l + (t / plan.duration) * (W - pad.l - pad.r);
+  const top = Math.min(peak * 1.05, axis === 's' ? 12 : 220);
+  const y = (v) => pad.t + (Math.min(v, top) / top) * (H - pad.t - pad.b);
+  ctx.font = '22px ui-monospace, monospace';
+  ctx.fillStyle = '#9db3c8';
+  ctx.strokeStyle = 'rgba(244,236,214,0.12)';
+  ctx.lineWidth = 1;
+  const stepV = axis === 's' ? 1 : 20;
+  for (let v = 0; v <= top; v += stepV) {
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y(v));
+    ctx.lineTo(W - pad.r, y(v));
+    ctx.stroke();
+    ctx.fillText(axis === 's' ? `${v} s` : `${v} m`, 14, y(v) + 7);
+  }
+  for (let t = 0; t <= plan.duration; t += plan.duration > 40 ? 10 : 5) {
+    ctx.fillText(`${t}`, x(t) - 8, H - 18);
+  }
+  ctx.fillText('race time, seconds', W / 2 - 100, H - 2);
+
+  /* Half distance, two thirds, and the first three finishes. */
+  const marks = [];
+  for (const [label, fraction] of [['half', 0.5], ['2/3', 2 / 3]]) {
+    let lo = 0;
+    let hi = plan.duration;
+    for (let k = 0; k < 40; k += 1) {
+      const mid = (lo + hi) / 2;
+      const lead = Math.max(...plan.curves.map((c) => c.s(mid)));
+      if (lead >= plan.line * fraction) {
+        hi = mid;
+      } else {
+        lo = mid;
+      }
+    }
+    marks.push([label, hi, '#e8a8b8']);
+  }
+  plan.order.slice(0, 3).forEach((entry, p) => marks.push([`${p + 1}`, plan.finish[entry], p === 0 ? '#7dffb4' : '#ffd45c']));
+  ctx.setLineDash([8, 8]);
+  for (const [label, t, colour] of marks) {
+    ctx.strokeStyle = colour;
+    ctx.beginPath();
+    ctx.moveTo(x(t), pad.t);
+    ctx.lineTo(x(t), H - pad.b);
+    ctx.stroke();
+    ctx.fillStyle = colour;
+    ctx.fillText(label, x(t) + 6, pad.t + 22);
+  }
+  ctx.setLineDash([]);
+
+  /* The field first, the story last, so the story is never hidden. */
+  const winner = plan.order[0];
+  const draws = Array.from({ length: plan.count }, (_, i) => i).sort((a, b) => (a === winner) - (b === winner) || (a === plan.rival) - (b === plan.rival));
+  for (const i of draws) {
+    const isWinner = i === winner;
+    const isRival = i === plan.rival;
+    ctx.strokeStyle = isWinner ? '#7dffb4' : isRival ? '#ffd45c' : 'rgba(157,179,200,0.38)';
+    ctx.lineWidth = isWinner ? 5 : isRival ? 4 : 1.6;
+    ctx.beginPath();
+    for (let k = 0; k <= steps; k += 1) {
+      const t = (k / steps) * plan.duration;
+      if (k === 0) {
+        ctx.moveTo(x(t), y(lines[i][k]));
+      } else {
+        ctx.lineTo(x(t), y(lines[i][k]));
+      }
+    }
+    ctx.stroke();
+  }
+}
+
+function numbers(plan, m) {
+  const rows = [
+    ['story', `${plan.story}${plan.photo ? ', photo finish' : ''}`, ''],
+    ['attempt', `${plan.attempt}${plan.fallback ? ' (the fallback)' : ''}`, plan.fallback ? 'bad' : 'ok'],
+    ['tried and rejected', plan.tried.length ? plan.tried.join('; ') : 'none', ''],
+    ['crossing order is the draw', String(m.orderOk), m.orderOk ? 'ok' : 'bad'],
+    ['first and second', `${m.minFirst.toFixed(3)} s apart (at least 0.04)`, m.minFirst >= 0.04 ? 'ok' : 'bad'],
+    ['other neighbours', `${Number.isFinite(m.minOther) ? m.minOther.toFixed(3) : 'none'} s apart (at least 0.08)`, m.minOther >= 0.08 ? 'ok' : 'bad'],
+    ['speed after the launch', `${m.minSpeed.toFixed(1)} to ${m.maxSpeed.toFixed(1)} m/s (12 to 36)`, m.minSpeed >= 12 && m.maxSpeed <= 36 ? 'ok' : 'bad'],
+    ['nearest two quads', `${m.minDistance.toFixed(2)} m (at least 0.5)`, m.minDistance >= 0.5 ? 'ok' : 'bad'],
+    ['winner time', `${m.winnerTime.toFixed(2)} s, ${(m.winnerRatio * 100).toFixed(0)}% of the length, ${m.laps} laps`, m.winnerRatio >= 0.9 && m.winnerRatio <= 1.1 ? 'ok' : 'bad'],
+    ['leads at half distance', String(m.leadsAtHalf), ''],
+    ['lead changes in the last third', String(m.finalThirdChanges), ''],
+    ['winning margin', `${m.margin.toFixed(3)} s`, ''],
+  ];
+  $('numbers').replaceChildren(...rows.map(([name, value, cls]) => {
+    const tr = document.createElement('tr');
+    const th = document.createElement('th');
+    th.textContent = name;
+    const td = document.createElement('td');
+    td.textContent = value;
+    td.className = cls;
+    tr.append(th, td);
+    return tr;
+  }));
+}
+
+async function run() {
+  const n = Number($('count').value);
+  const names = Array.from({ length: n }, (_, i) => `Pilot ${String(i + 1).padStart(2, '0')}`);
+  const seed = $('seed').value.trim().toLowerCase();
+  const receipt = await drawWithSeed(names, seed);
+  const { showSeed } = await derive(names, fromHex(seed, 32));
+  const plan = makePlan({
+    order: receipt.order,
+    showSeed,
+    length: Number($('length').value),
+    storyline: $('story').value || undefined,
+    photo: $('photo').value === '' ? undefined : $('photo').value === '1',
+  });
+  draw(plan, $('axis').value);
+  numbers(plan, measure(plan));
+  $('legend').textContent = `${n} names, the draw says ${names[receipt.order[0]]} wins. Mint is the winner, amber is the runner up the story is about. Stories: ${STORYLINES.join(', ')}.`;
+  window.__chart = { story: plan.story, photo: plan.photo, attempt: plan.attempt, fallback: plan.fallback, done: true };
+}
+
+$('controls').addEventListener('change', run);
+$('next').addEventListener('click', () => {
+  $('seed').value = bump($('seed').value.trim());
+  run();
+});
+$('fresh').addEventListener('click', async () => {
+  const names = Array.from({ length: Number($('count').value) }, (_, i) => `Pilot ${i + 1}`);
+  $('seed').value = (await drawLive(names)).seed;
+  run();
+});
+run();
+</script>
+</body>
+</html>

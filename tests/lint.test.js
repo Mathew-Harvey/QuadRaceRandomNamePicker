@@ -25,7 +25,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ORDINARY_RANDOM, WEB_CRYPTO, domTouches, importsIn, linesMatching, moduleSpecifiers, stripComments, urlProblems,
+  ORDINARY_RANDOM, WEB_CRYPTO, domTouches, importsIn, leadingComment, linesMatching, moduleSpecifiers, stripComments, urlProblems,
 } from '../scripts/lint.js';
 
 /* The things the rules look for, assembled here so this file is clean. */
@@ -123,4 +123,14 @@ test('every module a file names is found, in every spelling, and not in a commen
   `);
   assert.deepEqual(found.sort(), ['./five.js', './four.js', './one.js', './seven.js', './six.js', './three.js', './two.js']);
   assert.deepEqual(moduleSpecifiers('const a = 1;'), []);
+});
+
+test('a leading comment is the whole first comment of a script, a page or a Python file, and nothing after it', () => {
+  const long = `/*\n * ${'a long explanation '.repeat(400)}\n * GNU General Public License, WebFPV Race Name Picker\n */\nconst x = 1; // GNU General Public License`;
+  assert.ok(leadingComment(long).includes('WebFPV Race Name Picker'), 'the licence at the foot of a long comment is found');
+  assert.ok(!leadingComment('/* nothing */\nconst a = "GNU General Public License";').includes('GNU'), 'a licence in the code is not a header');
+  assert.ok(leadingComment('<!doctype html>\n<!--\n  GNU General Public License\n-->\n<html>').includes('GNU'));
+  assert.ok(leadingComment('#!/usr/bin/env python3\n# verify\n#\n# GNU General Public License\nimport os\n# not this').includes('GNU'));
+  assert.ok(!leadingComment('#!/usr/bin/env python3\n# verify\nimport os\n# GNU General Public License').includes('GNU'));
+  assert.equal(leadingComment('const x = 1;'), '');
 });

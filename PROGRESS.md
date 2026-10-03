@@ -110,3 +110,69 @@ The worst per word rejection rate over n = 2 to 50 is n = 50 at 1 in 93.4 millio
 ### Not done, by design
 
 The CSP, which needs `verify.html`'s inline module hashed (milestone 5). Everything from milestone 2 on.
+
+---
+
+## 2026-10-03 | milestone 2 | The plan
+
+`src/course.js`, `src/choreo.js`, `tools/race-chart.html`, and checks 6 to 8, on 3,000 plans.
+
+### What changed
+
+- **`src/course.js`** (pure geometry, no DOM): the oval, the cross section the quads fly in, the grid, the camera rail. Straights of 52 m, an arc of 30 m and transitions of 14 m make a **lap of 320.5 m**, so a 15, 30 and 60 second race is 1, 2 and 4 laps at about 21 m/s. The brief suggests 60 m straights, 32 m bends and about 300 m, which do not agree once the bends have transitions; 30 m is as near its 32 as the lap allows, and the yaw rate of a camera following the leader round it is v / 30 m, 41 degrees a second at the lap speed, under the brief's 50. The oval is 126 by 60 m on the centreline and fits the suggested 200 by 100 field. The quads race **clockwise**, so with the camera in the infield the pack crosses its screen left to right all the way round. u is positive outward.
+- **`src/choreo.js`**: `makePlan` (order, show seed, length, course) returns every quad's flight as a function of time, with `sample`, `locate`, `pose` (position, velocity, acceleration, the thrust axis, the heading, and the flip and wobble a story asks for) and `rank`. It checks itself, retries, swaps a story it cannot keep, and has a fallback that cannot collide. `measure` and `dramaOf` are the independent measurement the tests assert on. `internals` exposes the generator's parts to tests.
+- **`tools/race-chart.html`**: distance behind the leader against time, one line per quad, in metres or seconds, with half distance, two thirds and the first three finishes marked, built from the real draw for the seed typed in. It prints `measure` under the chart. Rendered and looked at for 50 names and for 12.
+- **`tests/choreo.test.js`** and `tests/lib/plan-cases.js`, `tests/lib/plan-worker.js`: 19 tests. Every one of the 3,000 plans takes its order from the real `shuffle` in `src/draw.js` over a SHA-256 stream, and runs on a worker thread.
+- **`scripts/lint.js`** now reads a file's whole leading comment for the licence (a long explanation above the licence is the normal case here, and a window of 4,000 characters failed `choreo.js` the moment its header grew), and fails any file under `src/` other than `src/draw.js`, or `index.html`, that names `drawWithSeed`: the live page reaches the draw through `drawLive`, which takes no seed.
+
+### Measured
+
+    npm test        60 of 60 pass, 0 skipped, 26.6 s wall (92 s CPU on 4 threads; a slower or smaller machine takes longer)
+    npm run lint    9 of 10 clean, 1 skipped (no sim/ yet)
+
+    3,000 plans (2: 300, 3: 300, 5: 700, 12: 700, 23: 600, 50: 400), made and measured in 22.8 s on 4 threads
+    check 6  the crossing order is the drawn order in all 3,000. Every storyline appears at every size, every size at every length.
+    check 7  speed after the launch 12.5 to 35.0 m/s            band 12 to 36
+             nearest two quads 0.85 m                           limit 0.5
+             first and second at least 0.045 s apart             limit 0.04
+             other neighbours at least 0.085 s apart             limit 0.08
+             winner time 94.0% to 106.0% of the length           limit 90% to 110%
+             progress never goes backwards, always a whole number of laps (1, 2, 4), and the finish line is the start line
+    check 8  over the 2,400 plans of five names or more (the brief asks for 1,000):
+               the winner leads at half distance in 21.0%       target 10 to 35
+               a lead change in the final third in 79.7%        target at least 60
+               a winning margin under 0.25 s in 37.3%           target 25 to 50
+             and by size: half 20.3 to 21.9%, changes 78.6 to 81.5%, close 35.4 to 38.8%
+    stories  wire 21.3%, surge 34.7%, comeback 24.1%, clip 19.9% (weights 22, 34, 24, 20)
+    swaps    8 of 3,000 plans (0.27%) flew the sturdy story because theirs could not be kept for their seed
+    fallback 0 of 3,000 needed the one slot per quad fallback
+    smooth   largest change in acceleration in 1/240 s is 0.55 m/s^2 (a switch in curvature rate made it 9.7)
+    forced   144 plans, every storyline at every size and length, with and without a photo finish: every promise kept, every race legal
+
+    time to make a plan: N = 50 about 40 ms, N = 23 about 13 ms, N <= 12 under 6 ms; the slowest of the 3,000 took 487 ms
+
+### What went wrong, in the order it was found
+
+- **A launch scaled by each quad's own cruise sent the rows into each other.** Every quad launched at its own k, and a back row quad that was going to win was 20% quicker off the blocks than the slow quad ahead of it, so rows met inside a second in a pack 15 m long, and the lane planner had no room. The launch is now the same for everybody and each quad's own speed is blended in over the next three seconds. That kept the closed form.
+- **My own cost function made quads migrate into their neighbours' lanes.** A small penalty for the edge lanes pulled every edge quad inward at the first chance, into the grid lane of a row mate who had not been planned yet, who then had nowhere to go (the planner's failures all said "blocked at 1.8 s", exactly). Lanes are held for the first 2.7 s now, which is conflict free because speeds are still common, and the penalty is gone.
+- **The generator's quick check had a wrong formula**, the gap along the track as a difference of two absolute arc lengths scaled by lane factors, which both hid and invented violations. It is the gap in s times the mean lane factor, with a conservative screen first.
+- **A faster `tabulatePath` left the frames after a short path at zero**, so every quad in a single row field sat at the origin. The quick check caught it within one run, which is its job.
+- **A clothoid is not smooth enough.** The smoothness test I wrote found jumps of 9.7 m/s^2, always at the ends of a transition, always for a quad in an edge lane. A quad at offset u covers 1 - u kappa of path per metre of line, so while curvature ramps its speed changes at -u kappa' s'^2, and a linear ramp has a kappa' that switches on and off. The transitions are raised cosines in curvature now, which turn the same angle over the same length, so the lap is the same. The loop also closes to 4e-14 m now, from 4e-7, because the heading is integrated exactly.
+- **The stories were far too big, and I only saw it by looking.** Every check was green and the chart of a 12 name race showed the early leader 40 m clear of the whole field and the winner clawing back 40 m with a rocket surge. They now start at about twice the size of ordinary variation and escalate only as far as the promise needs, which also asks for a visible deficit (4 m at half way) and a visible lead (3 m) rather than a hair. This is the strongest argument for `tools/race-chart.html` in the brief.
+- **The repair for "no lead change in the last third" made it worse.** When the winner had passed too early, the loop made her push stronger, which makes her pass sooner. It now tells the two failures apart and softens and delays the push. 71 of the 3,000 plans, all `comeback` at 15 s, had an unkept story at that point.
+- **`fitBand` shrank every bump of a quad to fix one dip**, taking the clipping rival's early lead away with her dip. It now softens only the bumps acting where the speed leaves the band, and the repair loop is capped at what the band can hold. Down to 15, then to 1 of 3,000 with 24 attempts, then to 0 by swapping to the sturdy story after 14.
+- **The generator sat exactly on the brief's gap limits**, so 110 plans measured 0.0799999 s. It asks for 0.045 and 0.085 now.
+- **Two of my own thresholds were wrong.** The cosine test compared against `Math.cos(Math.PI * x)` out to x = 4, where the reference is the one in error; it covers [-1, 1], the range the plan uses. And I invented an 80 degree cap on tilt, which a quad at 30 m/s in the outer lane of a bend, descending in a lane change, exceeds at 81.4 degrees. That is 3.1 g of thrust, which a five inch with a thrust to weight of 7 to 9 makes at under half throttle, so the physical limit is thrust and the test asserts 5 g, with "never inverted" (88 degrees) and the tilt printed. This is an argument and not a quiet loosening: the 80 was never the brief's.
+- **The first version of `measure` took 50 ms and its own loops, not the maths, were half of it** (one array per quad, hopped across for every frame). Frame major flat arrays took it to 31 ms.
+
+### Decisions to know about
+
+- **The fleet can be scaled to about 1.7 times real size before props can touch**, because no two quads are ever closer than 0.85 m centre to centre. Milestone 3 decides the scale from what the camera needs and records it.
+- **Check 8 is computed over all 2,400 plans of N >= 5 in the 3,000**, not a separate 1,000, so it is "the same plans" as the brief says for checks 6 and 7, and the story weights are the natural ones, not forced.
+- **The tail is a long way back.** With 50 names and gaps between places of 0.085 s or more, the last quad finishes about 6 s after the winner and 140 m behind at the finish, which is 45% of a lap. The camera follows the leading group and the tower shows everybody.
+- **`npm test` now takes about 27 s on 4 threads**, which is the cost of measuring 3,000 plans at 60 Hz over every pair of quads. It is not "seconds" on a small machine.
+- The plan's cross section is a lattice of 9 lanes by 4 levels (1.3 m and 0.9 m), and the planner keeps 0.85 m. After the hold it tries the plain path first, and only runs the dynamic programme if that collides, which is what made N = 50 take 40 ms and not 95.
+
+### Not done, by design
+
+The track document for the simulator (it needs the simulator's schema, which arrives with `sim/` in milestone 3), and everything on screen.

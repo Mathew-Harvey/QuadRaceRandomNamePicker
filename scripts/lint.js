@@ -130,6 +130,34 @@ export function stripComments(text) {
   return out;
 }
 
+/*
+ * A file's leading comment, the whole of it: the first block comment of a
+ * script or a stylesheet, the first comment of a page, or the run of # lines
+ * at the top of a Python or shell file. The licence grants itself at the foot
+ * of that comment, below however much the file has to say about itself, so a
+ * window of so many characters would punish a file for explaining itself.
+ */
+export function leadingComment(text) {
+  const body = text.replace(/^#![^\n]*\n/, '').replace(/^\s+/, '');
+  if (body.startsWith('/*')) {
+    const end = body.indexOf('*/');
+    return end < 0 ? body : body.slice(0, end + 2);
+  }
+  const doc = /^(?:<!doctype[^>]*>\s*)?<!--/i.exec(body);
+  if (doc) {
+    const end = body.indexOf('-->');
+    return end < 0 ? body : body.slice(0, end + 3);
+  }
+  const lines = [];
+  for (const line of body.split('\n')) {
+    if (!line.startsWith('#')) {
+      break;
+    }
+    lines.push(line);
+  }
+  return lines.join('\n');
+}
+
 /* 1-based line numbers where `pattern` matches `text`. */
 export function linesMatching(text, pattern) {
   const hits = [];
@@ -252,13 +280,13 @@ async function run() {
   /*
    * 10a. A GPLv3 HEADER ON EVERY SOURCE FILE.
    *
-   * The simulator's wording with this project's name, in the first four
-   * thousand characters. The brief at prompts/ is a record and not source,
-   * and sim/ is the simulator's own, held by the manifest below.
+   * The simulator's wording with this project's name, in the file's leading
+   * comment, all of it. The brief at prompts/ is a record and not source, and
+   * sim/ is the simulator's own, held by the manifest below.
    */
   {
     const bare = ownSource.filter((rel) => {
-      const head = read(rel).slice(0, 4000);
+      const head = leadingComment(read(rel));
       return !(head.includes('GNU General Public License') && head.includes('WebFPV Race Name Picker'));
     });
     check(
@@ -357,6 +385,30 @@ async function run() {
     );
   } else {
     check('src/draw.js imports nothing and touches no page', 'skip', 'src/draw.js is not written yet');
+  }
+
+  /*
+   * THE SEEDED DRAW IS NOT REACHABLE FROM THE LIVE PAGE.
+   *
+   * No field, address parameter, test hook or key sets the seed or the winner
+   * of a live draw. The one function that takes a seed, drawWithSeed, is for
+   * tests, verifiers and tools, and the live page reaches the draw through
+   * drawLive, which takes none. So index.html and every module under src/
+   * except src/draw.js itself must not name it.
+   */
+  {
+    const live = ownSource.filter((rel) => rel === 'index.html' || (/^src\/.*\.js$/.test(rel) && rel !== 'src/draw.js'));
+    const hits = [];
+    for (const rel of live) {
+      for (const n of linesMatching(stripComments(read(rel)), /\bdrawWithSeed\b/)) {
+        hits.push(`${rel}:${n}`);
+      }
+    }
+    check(
+      'the seeded draw is not reachable from the live page',
+      hits.length === 0,
+      hits.length ? `NAMED in ${where(hits)}` : `${live.length} live files read`,
+    );
   }
 
   /*
