@@ -176,3 +176,60 @@ The CSP, which needs `verify.html`'s inline module hashed (milestone 5). Everyth
 ### Not done, by design
 
 The track document for the simulator (it needs the simulator's schema, which arrives with `sim/` in milestone 3), and everything on screen.
+
+## 2026-10-03 | milestone 3 | The world
+
+### What changed
+
+- **`scripts/vendor.js` and `sim/`**: the simulator's import closure, 44 files, copied byte for byte from its repository root at commit 787ea595a (clean), with `sim/MANIFEST.json` and the lint holding every hash. `NOTICE` records what came from where.
+- **`src/layout.js`** writes the track document the simulator's field is built around, from `src/course.js`'s numbers: eight flags in flying order on the inside edge of the track, one `startPads` (nine stands, one to a lane, which is the front row of the grid), and a `groundLogo` per sponsor mark. It uses the simulator's own `createTrack`, `createElement` and `courseFromDocument`, and reads as a closed lap with no warnings.
+- **`src/world.js`** is the join: `buildShell`, `buildFieldScene`, `buildComposer`, then the picker's own things in one group lifted by the ground's height. `frame({ shot, t, k, plan, count, ... })` places the fleet, aims the camera, and draws.
+- **`src/fleet.js`**: up to fifty of the simulator's five inch quads in about forty instanced draws, with the livery as an instance colour, spinning props, and its own write into the post chain's normal and depth target so the world's ink does not run through the quads (see "What went wrong").
+- **`src/gantry.js`**: a tube frame, a vinyl header printed on both faces with the chequer and the event title lettered on it, four lamps standing proud of both faces, a scoreboard for the fingerprint, and a chequered finish line across the track.
+- **`src/boards.js`**: a ring of about eighty vinyl boards, spaced evenly along the offset curve, in the `BANNER` palette, painted with the simulator's chequer, hems and lettering; the wordmark and `webfpv.org` when there are no logos, and the marks round robin on a panel the colour of their own border when there are.
+- **`src/grid.js`**: rows two onward of the grid, rebuilt as merged geometry when the count changes. **`src/camera.js`**: the five shots as pure functions of the plan and the clock. **`src/frame.js`**: the one place the plan's frame becomes Three.js's. **`src/livery.js`**: OKLCH colours a golden angle apart.
+- **`tools/fly.html`**: a development page that flies a plan round the field with no UI (`?n=23&length=30&graphics=low&speed=1&logos=2`, and `?manual` for scripts). It is not a draw and says so.
+- **`tests/frame.test.js`, `layout.test.js`, `camera.test.js`**: 22 tests. `CLAUDE.md` has three new decisions.
+
+### Measured
+
+    npm test        82 of 82 pass, 0 skipped, 27 s wall on 4 threads
+    npm run lint    10 of 10 clean, 29 source files, sim/ equal to its manifest
+
+    the field builds in 2.3 to 4.2 s on the software rasteriser at 1280 by 720 (every preset), with no console error or warning
+    one frame, 50 quads, High:  116 draw calls and 1.11 M triangles on the rail, 182 calls in the paddock, counting the colour pass, the
+                                ink prepass, the shadow map and the fleet's own geometry pass. The fleet is about forty of them.
+    the leading quads, at 1920 by 1080, over nine plans (5, 23 and 50 names, every length), the top three places, drawn at 1.7 times life size:
+                                median 48 px, 5th percentile 37.1, least 29.6. The brief asks 40 for the leading group.
+    the rail's worst yaw rate over those plans, 120 samples a second:  44.9 degrees a second   (brief: at most 50)
+    the leader in frame from 1.7 s to the line:  0 of 17,786 frames at 16 by 9, and 0 of 17,786 on a phone held upright
+    the camera is behind the line by 6 m, never past it, and still by the time the last quad has crossed
+    the closest two of fifty livery hues are 0.011 apart in the chroma plane (entries 0 and 34); neighbours are 0.24 apart
+
+### What went wrong, in the order it was found
+
+- **The brief's "the fleet goes on layer 0" cannot be done with instancing.** The post chain's prepass overrides every material with a shader that has no `instanceMatrix`, so an instanced fleet on layer 0 is drawn at the origin there, and the world's ink lines (a board's frame, the treeline) run through every quad. I found it by reading `post.js` before writing a line of the fleet. The fleet is on layer 4, which the prepass never draws, and writes itself into the post chain's own normal and depth target afterward, as one instanced draw on layer 5 through the same packing, by wrapping `post.composer.render` (a public property of the object `buildComposer` returns). Nothing in `sim/` is touched. The first pictures with 23 quads showed inked silhouettes on every one, and no ghost at the origin.
+- **The pitch is painted 2 cm above the ground, and my finish line at 1.2 cm was under it.** Moved to 4 cm with a polygon offset. Then I had rotated the strip a quarter turn as well, which laid it along the track instead of across it, and the picture showed it.
+- **A camera abeam of the line films every finish through a post.** The first rail stopped square to the line and the gantry's near upright was in the middle of the held frame. It stops 6 m short, so the line and the gantry are on the right of the frame and the pack crosses the line in the right third.
+- **The rail followed the group's middle and put the leader at the left edge.** It follows three parts leader to one part the mean of the leading five, with 3.5 m of room ahead once the opening is over.
+- **The rail turned 54 degrees a second in a bend, and the brief says 50.** A camera abeam of the pack turns at the pack's own rate, which is speed over radius, and a quad at 28 m/s on 30 m is 53. It is now not allowed to go round a bend faster than 44 degrees a second, which is 23 m/s there, and falls a few metres behind in the fastest stretch and catches up on the next straight. That needs memory, so it is a table worked out once per plan from the plan alone; the camera is still a function of the plan and the clock and nothing else. 44.9 measured.
+- **The aerial turned 82 degrees a second at its end.** I slid the eye and the look-at point past each other, and the bearing between two points sliding past each other changes quickest where they meet. The eye goes in a line and the look is turned by angle through the shorter way round, which is the easing's own rate.
+- **On a phone held upright the leader left the frame in 4 frames of 17,786**, always the innermost lane at the finish, 0.5 degrees out of a 46 degree field. The minimum horizontal field on a narrow window is 50 degrees now.
+- **The paddock and aerial shots put the quads on the race clock** because `frame()` gave the fleet its `t` whatever the shot, and the orbit's clock is not the race's. A scratch picture of the paddock at t = 3 had quads in flight. The fleet is on its blocks unless the shot is the rail or the held frame.
+- **Every flag wore the simulator's green cue** until `map.setNextGate(-1)`, which dresses every marker dark: it is the target glow, not an outline, and the field only dresses a gate when told which is the target.
+- **Chrome warned about a canvas read back twice** the moment a sponsor's mark was on the grass: the field's pitch reads its whole sheet to fade its edge and does it again when the mark has decoded. Check 12 wants no warnings, and the code is the simulator's, so the canvases the build makes are made with `willReadFrequently` by a patch on `getContext` that is on for the build and off after it.
+- **Three of my own test mistakes**, none in the code: `deepEqual` says `-0` is not `0`, I folded a hue difference of 137.5 into 85, and the "left to right" test started at 0.5 s, when the leader is doing 4.5 m/s from a standing start.
+
+### Decisions to know about
+
+- **The fleet is drawn at 1.7 times real size and the rail is the brief's 20 m.** That puts the leading quads at a median 48 px at 1080 lines, and 37.1 at the 5th percentile, which is 3 px under the brief's 40, and 29.6 at the least (a quad in the outer lane of a bend, 30 m off). Going nearer than 20 m or larger than 1.7 would meet the 40, at the price of props that overlap on screen at the planner's 0.85 m separation. I left both as the brief and the planner have them and the test holds the numbers from getting worse (median 40, 5th percentile 36, least 28). Say if you would rather have the 40 and a rail at 17 m.
+- **The livery tints the canopy, the front props, the front discs and the front LED bars,** and leaves the frame, the rear props, the rear discs and the rear LEDs as the simulator's, so the nose is always the coloured end. At race speed from the side the discs are almost edge on, so the colour is mostly the canopy and the front discs; the tag carries the number and the name, and the colour is a convenience.
+- **19 of the fifty livery hues are outside sRGB at L 0.80 and C 0.13** and are clamped, which makes those a little less chromatic than asked. They are still 137.5 degrees from their neighbours.
+- **The paddock orbit is centred on the grid, not on `map.attract`.** The simulator's descriptor frames the layout's bounds, which for a 140 m oval is a circle 80 m out, from which a quad on the grid is a speck.
+- **The first row of the grid is the world's** (the document has to have a `startPads`), always present, so an empty grid shows a start line and not a bare field.
+- **The simulator's `race.js` and a few other vendored modules can touch `localStorage`** when the simulator's own game asks them to. The picker builds none of those objects. `NOTICE` says so.
+- **Frame time is not measured.** The software rasteriser says nothing about a real GPU. Draw calls and triangles are the numbers above; frame rate on real hardware is for the owner's pass.
+
+### Not done, by design
+
+Everything on screen: the setup sheet, the tower, the tags, the chip, the beats, the results page, sponsor intake (the stretch for the camera is `src/sponsors.js`'s, and `tools/fly.html` stretches its made up marks by hand to look at the grass), the draw log, sound, the flow and `scripts/shots.js`. The flip and the wobble are in the maths (`tests/frame.test.js`) and have not been looked at in a picture yet.

@@ -1,0 +1,172 @@
+<!doctype html>
+<!--
+  fly.html: a development page that flies a plan round the field with no UI.
+
+  It is the third milestone's deliverable and a tool afterwards, not linked
+  from the app: build the world, make a plan, and run the shots. It is not a
+  draw. The order below is a fixed scramble made for the page and the seed a
+  fixed string, so nothing here issues a receipt or can be mistaken for a
+  result; the live app never takes its order or seed from anywhere but
+  src/draw.js.
+
+    ?n=23            how many quads (2 to 50)
+    ?length=30       15, 30 or 60 seconds
+    ?graphics=low    low, medium or high; the simulator's own detection otherwise
+    ?speed=1         presentation speed of the race clock
+    ?logos=2         that many made up sponsor marks (0 to 4), on the boards and on the grass
+    ?manual          no loop: scripts drive window.__fly.draw(...) one frame at a time
+
+  This file is part of the WebFPV Race Name Picker.
+
+  The WebFPV Race Name Picker is free software: you can redistribute it
+  and/or modify it under the terms of the GNU General Public License as
+  published by the Free Software Foundation, either version 3 of the
+  License, or (at your option) any later version.
+
+  The WebFPV Race Name Picker is distributed in the hope that it will be
+  useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+  General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with the WebFPV Race Name Picker. If not, see
+  <https://www.gnu.org/licenses/>.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fly (development page)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #141c16; overflow: hidden; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+    #hud {
+      position: fixed; left: 12px; top: 10px; margin: 0;
+      font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #f3ead4; text-shadow: 0 0 3px #0b1116, 0 0 3px #0b1116; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <pre id="hud">building the field</pre>
+  <script type="module">
+    import { makePlan } from '../src/choreo.js';
+    import { buildWorld } from '../src/world.js';
+
+    const params = new URLSearchParams(location.search);
+    const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+    const n = clamp(Math.round(Number(params.get('n')) || 23), 2, 50);
+    const length = [15, 30, 60].includes(Number(params.get('length'))) ? Number(params.get('length')) : 30;
+    const speed = Number(params.get('speed')) || 1;
+    const manual = params.has('manual');
+    const hud = document.getElementById('hud');
+
+    /* A fixed scramble: entry i finishes in place (i * 7 + 3) mod n, or the next place that is free. Not a draw. */
+    const order = [];
+    {
+      const taken = new Set();
+      for (let i = 0; i < n; i += 1) {
+        let p = (i * 7 + 3) % n;
+        while (taken.has(p)) {
+          p = (p + 1) % n;
+        }
+        taken.add(p);
+        order[p] = i;
+      }
+    }
+    const showSeed = 'f0'.repeat(32);
+    const plan = makePlan({ order, showSeed, length });
+
+    /* Made up marks, for looking at the boards and the grass with something on them: a coloured plate and a word. */
+    const marks = { boards: [], grass: [] };
+    {
+      const count = clamp(Math.round(Number(params.get('logos')) || 0), 0, 4);
+      const styles = [['ACME', '#1e3566', '#f3ead4'], ['ZORP', '#b8332c', '#f3ead4'], ['LUMEN', '#f3ead4', '#141c16'], ['QUASAR', '#2a7f62', '#f3ead4']];
+      /* The grass is painted for the rail camera, which looks at it from about 25 degrees: stretched along the line of sight by 1 over the sine of that. */
+      const STRETCH = 2.2;
+      for (let i = 0; i < count; i += 1) {
+        const [word, bg, fg] = styles[i];
+        const c = document.createElement('canvas');
+        c.width = 600;
+        c.height = 200;
+        const x = c.getContext('2d');
+        x.fillStyle = bg;
+        x.fillRect(0, 0, 600, 200);
+        x.fillStyle = fg;
+        x.font = '900 120px system-ui, sans-serif';
+        x.textAlign = 'center';
+        x.textBaseline = 'middle';
+        x.fillText(word, 300, 108);
+        marks.boards.push({ image: c, base: bg });
+        const g = document.createElement('canvas');
+        g.width = 600;
+        g.height = Math.round(200 * STRETCH);
+        g.getContext('2d').drawImage(c, 0, 0, g.width, g.height);
+        marks.grass.push({ image: g.toDataURL('image/png'), width: 8, depth: 8 * (200 * STRETCH) / 600 });
+      }
+    }
+
+    const canvas = document.getElementById('c');
+    const world = await buildWorld({
+      canvas,
+      logos: marks,
+      graphics: params.get('graphics'),
+      onProgress: (f) => { hud.textContent = `building the field ${Math.round(f * 100)}%`; },
+    });
+    hud.textContent = '';
+
+    /* One frame at the state asked for. The shot script and the loop below both come through here. */
+    const draw = (state = {}) => {
+      const view = world.frame({ plan, count: n, ...state });
+      return { fov: view.fov };
+    };
+
+    window.addEventListener('resize', () => world.resize());
+
+    window.__fly = {
+      world, plan, n, order, draw, ready: true,
+      info: () => ({
+        n, length, laps: plan.laps, duration: plan.duration, lap: world.course.lap, groundY: world.groundY,
+        graphics: world.quality.id, story: plan.story, calls: world.renderer.info.render.calls,
+        triangles: world.renderer.info.render.triangles, size: [world.camera.aspect],
+      }),
+    };
+
+    if (!manual) {
+      const t0 = performance.now();
+      let last = t0;
+      const tick = (now) => {
+        const dt = Math.min(0.1, (now - last) / 1000);
+        last = now;
+        const e = (now - t0) / 1000;
+        const wall = e;
+        let state;
+        if (e < 3) {
+          state = { shot: 'paddock', t: e, spin: 0 };
+        } else if (e < 8) {
+          const lit = Math.min(3, Math.floor((e - 3.5) / 1));
+          state = { shot: 'aerial', k: (e - 3) / 5, spin: 30, lamps: [Math.max(0, lit), e > 7.5] };
+        } else {
+          const t = Math.max(0, (e - 8) * speed);
+          const done = t >= plan.duration;
+          state = { shot: done ? 'held' : 'rail', t: Math.min(t, plan.duration), spin: 900, discs: 0.24, lamps: [0, true] };
+        }
+        draw({ ...state, dt, wall });
+        hud.textContent = `${state.shot}  t ${(state.t ?? 0).toFixed(2)} s  ${world.renderer.info.render.calls} calls`;
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }
+  </script>
+</body>
+</html>

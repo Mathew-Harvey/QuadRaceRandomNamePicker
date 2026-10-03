@@ -1,0 +1,868 @@
+/*
+ * path.js: Create Path. Turn the flying order into a racing line.
+ *
+ * The method, exactly as the tool implements it:
+ *
+ *   1. Walk the sequence. Each APERTURE contributes a knot at the opening's
+ *      centre with a tangent equal to the aperture normal multiplied by the
+ *      entry sign, so the tangent always points the way the quad is going.
+ *   2. Each FLAG or CONE contributes a virtual knot offset from the marker
+ *      by its clearance radius, perpendicular to the local direction of
+ *      travel, on the chosen pass side. Its tangent is the local direction,
+ *      because a marker has no plane of its own to take one from.
+ *   3. If START PADS are placed the lap is a circuit, so a closing knot is
+ *      appended at the FIRST sequenced element, same position and tangent.
+ *      The pads are where the quad sits. They are not a hole and they do
+ *      not belong on the racing line: drawing them in, then drawing the
+ *      return to them, is the trail that looped around the grid.
+ *   4. Fit a cubic Hermite between each consecutive pair, with both tangents
+ *      scaled by settings.tangentScale multiplied by the straight line
+ *      distance between that pair. One constant, in elements.js, tunable per
+ *      track in doc.settings.
+ *   5. Sample it, and carry arc length and curvature radius along.
+ *
+ * Curvature is computed from the analytic first and second derivatives of
+ * the Hermite rather than from finite differences of the sampled polyline,
+ * because a finite difference at this sample density reports a radius that
+ * depends on the sample count, and a warning threshold that moves when you
+ * change an unrelated setting is a warning nobody believes.
+ *
+ * This file is part of WebFPVSimulator.
+ *
+ * WebFPVSimulator is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or (at
+ * your option) any later version.
+ *
+ * WebFPVSimulator is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY, without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with WebFPVSimulator. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+import { KIND, trackClassOf, tuningFor, virtualApertureDims } from './elements.js';
+import {
+  apertureCenter, aperturesOf, elementById, kindOf, entryAnchor, elementNormal, startPadsOf,
+} from './model.js';
+import { nearbyApertureTravel, markerPassDir } from './faces.js';
+import { wrapBetween } from './figures.js';
+import {
+  add, apertureFrame, clamp, cross, dist, dot, leftOf, length, normalize, scale, sub, yawVector,
+} from './geometry.js';
+
+/*
+ * How many steering knots the avoidance pass below may insert before it
+ * gives up. A track that still crosses a gate after this many dodges is
+ * telling the author something the line cannot fix, and an unbounded loop
+ * on a document somebody is typing into is worse than a wrong line.
+ */
+const DODGE_LIMIT = 12;
+
+/* Samples per segment when LOOKING for a crossing. Coarser than the drawing
+ * pass on purpose: this runs on every edit and a gate is never so thin that
+ * 24 samples step over it. */
+const DODGE_PROBE = 24;
+
+/*
+ * The knots, in order. Each carries where it is, which way the quad is going
+ * through it, and enough identity for a warning to name it.
+ *
+ *   role   'aperture' | 'marker' | 'wrap' | 'finish'
+ *   seq    the sequence entry that produced it, or null for wrap and finish
+ *   index  one based position in the flying order, or null
+ *
+ * closeLoop asks for the closing knot whether or not the track has start
+ * pads. The builder never passes it, so what an author sees is unchanged.
+ * The animation export does, because a RaceGOW lap starts and finishes on
+ * one designated gate, the first one flown, and that is true of a track
+ * whose author has not placed pads. Without it the exported line stops at
+ * the last gate and the animation cannot loop: on the shipped Living room 1,
+ * dropping the pads loses the whole return leg, 5.134 m of a 7.154 m lap.
+ */
+/*
+ * WHICH WAY PAST A MARKER THE AUTHOR HAS TURNED BY HAND.
+ *
+ * A marker whose yaw is overridden has a fixed pass direction, so the line
+ * runs square to it and all that is left to decide is the sign: one way
+ * along the pass line or the other. The chain direction, next knot minus
+ * previous knot, gets that wrong on a hairpin, and RaceGOW5 Track 8 is made
+ * of hairpins round one tall pole: the lap leaves the tower going one way,
+ * turns round beyond the pole, comes back past it the other way, and the
+ * next opening is on the side it left from. Next minus previous is then
+ * straight up the pole and says nothing, or points the way the lap is not
+ * going.
+ *
+ * What decides it is where the quad IS when it sets off for the marker: the
+ * previous knot plus a step along that knot's own tangent. From there the
+ * marker is either ahead along the pass line or behind it. The step is the
+ * marker's own clearance, and it is that short on purpose: it only has to
+ * break the tie when the marker stands dead abeam of the previous knot, and
+ * a longer one, a body length say, overshoots a pole one lattice unit
+ * along and answers the other way. A marker still square across the line
+ * after the step keeps the chain's answer, as does the first knot of a
+ * track with no pads.
+ */
+function travelPastFixedMarker(el, prev, step) {
+  if (!prev) {
+    return null;
+  }
+  const pass = yawVector(el.yaw);
+  const along = leftOf({ x: pass.x, y: pass.y, z: 0 });
+  const t = normalize({ x: prev.tangent.x, y: prev.tangent.y, z: 0 }, { x: 1, y: 0, z: 0 });
+  const from = add(prev.pos, scale(t, step));
+  const to = sub(el.position, from);
+  const s = along.x * to.x + along.y * to.y;
+  if (Math.abs(s) < 1e-6) {
+    return null;
+  }
+  return scale(along, s >= 0 ? 1 : -1);
+}
+
+export function buildKnots(doc, { closeLoop = false } = {}) {
+  const start = startPadsOf(doc);
+  const cls = trackClassOf(doc);
+
+  /* Raw anchors first, because a marker's offset needs a direction and the
+   * direction has to come from geometry that does not itself depend on the
+   * offset. Same chain faces.js uses, for the same reason. */
+  /* Pads stay off this list. faces.js still reads them for auto-heading.
+   * Putting them here is what sent the Hermite, the 3D trail and the
+   * grass dashes out to the grid and back again. */
+  const raw = [];
+  doc.sequence.forEach((s, i) => {
+    const pos = entryAnchor(doc, s);
+    if (!pos) {
+      return;
+    }
+    const el = elementById(doc, s.elementId);
+    raw.push({
+      pos,
+      seq: s,
+      role: kindOf(el) === KIND.APERTURE ? 'aperture' : 'marker',
+      index: i + 1,
+    });
+  });
+
+  const n = raw.length;
+  const knots = [];
+  for (let i = 0; i < n; i += 1) {
+    const k = raw[i];
+    const before = raw[Math.max(0, i - 1)].pos;
+    const after = raw[Math.min(n - 1, i + 1)].pos;
+    const chainDir = n > 1 ? normalize(sub(after, before), { x: 1, y: 0, z: 0 }) : { x: 1, y: 0, z: 0 };
+
+    const el = elementById(doc, k.seq.elementId);
+    if (!el) {
+      continue;
+    }
+
+    if (k.role === 'aperture') {
+      const nrm = elementNormal(el);
+      /* entry 0 means undecided. Point it along the course so the line is
+       * still drawable; warnings.js reports the entry as unset. */
+      const sign = k.seq.entry === 0 ? (dot(nrm, chainDir) >= 0 ? 1 : -1) : k.seq.entry;
+      knots.push({
+        pos: { ...k.pos },
+        tangent: scale(nrm, sign),
+        role: 'aperture',
+        seq: k.seq,
+        index: k.index,
+        elementId: el.id,
+      });
+      continue;
+    }
+
+    /* Marker. Push the knot off the pole by the clearance radius, in the
+     * pass direction: square to travel on the derived side, or wherever the
+     * author has turned the marker to. Keep the tangent on the plan: a flag
+     * has no vertical face, and a z component here is what sends the
+     * Hermite between two ground markers underground.
+     * A pole on a gate stile takes that gate's travel, or the square
+     * stands along the PVC and a pass through the opening never hits it. */
+    const prev = knots.length ? knots[knots.length - 1] : (start ? {
+      pos: { ...start.position }, tangent: yawVector(start.yaw),
+    } : null);
+    /* A waypoint turned by hand points the line the way its arrow points:
+     * it has no pass side for the yaw to mean, and the apex of a loop over a
+     * tower or round a pole has to face the way the lap is going there. */
+    const travel = nearbyApertureTravel(doc, el)
+      || (el.type === 'waypoint' && el.yawOverridden ? yawVector(el.yaw) : null)
+      || (el.yawOverridden ? travelPastFixedMarker(el, prev, Math.max(0.05, k.seq.clearance ?? 0)) : null)
+      || chainDir;
+    const off = scale(markerPassDir(el, k.seq, travel), k.seq.clearance ?? 0);
+    const level = normalize({ x: travel.x, y: travel.y, z: 0 }, { x: 1, y: 0, z: 0 });
+    /*
+     * A WAYPOINT TURNED BY HAND POINTS THE LINE UP OR DOWN AS WELL AS ALONG, by its pitch. A turn flown on the
+     * level never needed it, and every waypoint in a document that exists has a pitch of nothing, so none of
+     * them moves. A loop does need it: the waypoints of a power loop point up, over and down (manoeuvres.js),
+     * and a knot that said "level" at the side of one would put a kink in the line there. Only a waypoint
+     * the author turned, and never a flag or a cone, whose tangent stays on the plan for the reason above.
+     */
+    const lift = el.type === 'waypoint' && el.yawOverridden ? (Number(el.pitch) || 0) : 0;
+    const flat = lift === 0
+      ? level
+      : { x: Math.cos(lift) * level.x, y: Math.cos(lift) * level.y, z: Math.sin(lift) };
+    /*
+     * HEIGHT. A marker has no face and no sill and its anchor is the foot of
+     * the pole, so the knot used to sit on the floor, and every pass round a
+     * pole dived the line to the ground and lifted it again. The knot now
+     * takes the height the lap is already at, halfway between the knot
+     * before and the anchor after, held inside the marker's own scoring
+     * square so a cone is not passed over its head. A waypoint keeps its
+     * own height, because pinning a point at a height is what it is for.
+     */
+    let z = k.pos.z;
+    if ((k.seq.clearance ?? 0) > 0) {
+      const prevZ = prev ? prev.pos.z : k.pos.z;
+      const nextZ = i + 1 < n ? raw[i + 1].pos.z : (raw.length ? raw[0].pos.z : k.pos.z);
+      const square = virtualApertureDims(el, k.seq, cls);
+      z = clamp((prevZ + nextZ) / 2, k.pos.z, k.pos.z + square.clearH * 0.9);
+    }
+    knots.push({
+      pos: { ...add(k.pos, off), z },
+      tangent: flat,
+      role: 'marker',
+      seq: k.seq,
+      index: k.index,
+      elementId: el.id,
+      markerPos: { ...k.pos },
+    });
+  }
+
+  /*
+   * Wraps between two stacked passes on the SAME structure. Without these
+   * the Hermite climbs the shared XY and the line goes through the PVC.
+   * A wrap is not a station: trackdoc scores aperture knots, and marker
+   * knots that carry a clearance, but never these.
+   */
+  const withWraps = [];
+  for (let i = 0; i < knots.length; i += 1) {
+    withWraps.push(knots[i]);
+    const a = knots[i];
+    const b = knots[i + 1];
+    if (!b || a.role !== 'aperture' || b.role !== 'aperture' || a.elementId !== b.elementId) {
+      continue;
+    }
+    const stacked = elementById(doc, a.elementId);
+    if (!stacked || !a.seq || !b.seq) {
+      continue;
+    }
+    const wrap = wrapBetween(stacked, a.seq, b.seq, trackClassOf(doc));
+    withWraps.push({
+      pos: wrap.pos,
+      tangent: wrap.tangent,
+      role: 'wrap',
+      seq: null,
+      index: null,
+      elementId: stacked.id,
+    });
+  }
+  /*
+   * A circuit closes at the first sequenced element, not at the pads. Same
+   * position and tangent so the Hermite joins without a hook.
+   *
+   * MORE THAN ONE KNOT, because one element is not a lap. With `> 0` a
+   * track holding pads and a single gate got a closing knot that was an
+   * exact copy of the only knot it had: a zero length path, no racing line
+   * drawn at all, and a "two knots in the same place" warning pointing at
+   * one gate. That is the first thing an author sees after placing their
+   * first gate, so it has to be nothing rather than a complaint.
+   */
+  if ((start || closeLoop) && withWraps.length > 1) {
+    const first = withWraps[0];
+    withWraps.push({
+      pos: { ...first.pos },
+      tangent: { ...first.tangent },
+      role: 'finish',
+      seq: first.seq,
+      index: null,
+      elementId: first.elementId,
+      markerPos: first.markerPos ? { ...first.markerPos } : undefined,
+    });
+  }
+  /* Last, because the closing leg back to the first gate has to be checked
+   * for a gate in the way exactly like every other leg. The wrong-way pass
+   * runs after that, on the line the author will actually see. */
+  return avoidWrongWay(doc, avoidForeignApertures(doc, withWraps));
+}
+
+/*
+ * NOT FLYING THROUGH A GATE THE QUAD WAS NOT SENT THROUGH.
+ *
+ * The Hermite between two knots is fitted from those two knots and nothing
+ * else, so it has never known that a third gate is standing in the way. On
+ * the tracks that ship, five of seventeen fly the line clean through an
+ * opening that is not the one being scored, which is not a thing a pilot
+ * would ever do: you go round.
+ *
+ * The fix is the mechanism the stack wrap already uses. Find where the curve
+ * crosses a foreign opening, and put a steering knot at that crossing pushed
+ * just outside the frame, so the curve is forced past the gate instead of
+ * through it. It carries no sequence entry, exactly like a stack wrap, so
+ * nothing downstream counts it as a station.
+ *
+ * It escapes across the NEARER edge, which is the smaller correction and the
+ * one a pilot would take, and it clears by the same margin the warning pass
+ * gives a barrier, because the line is a centreline and a quad is not a
+ * point.
+ */
+function apertureRects(doc) {
+  const out = [];
+  for (const el of doc.elements) {
+    if (kindOf(el) !== KIND.APERTURE) {
+      continue;
+    }
+    for (const ap of aperturesOf(el)) {
+      out.push({
+        key: `${el.id}#${ap.index}`,
+        c: apertureCenter(el, ap.index),
+        f: apertureFrame(el.yaw, el.pitch),
+        hw: ap.clearW / 2,
+        hh: ap.clearH / 2,
+      });
+    }
+  }
+  return out;
+}
+
+/* Which opening, if any, this knot is standing in. */
+function keyOf(knot) {
+  return knot && knot.seq ? `${knot.seq.elementId}#${knot.seq.apertureIndex ?? 0}` : null;
+}
+
+function firstCrossing(a, b, rects, kScale, clear) {
+  const span = dist(a.pos, b.pos);
+  if (span < 1e-6) {
+    return null;
+  }
+  const m0 = scale(a.tangent, span * kScale);
+  const m1 = scale(b.tangent, span * kScale);
+  const mine = new Set([keyOf(a), keyOf(b)].filter(Boolean));
+  let prev = hermite(a.pos, b.pos, m0, m1, 0);
+  for (let i = 1; i <= DODGE_PROBE; i += 1) {
+    const t = i / DODGE_PROBE;
+    const p = hermite(a.pos, b.pos, m0, m1, t);
+    for (const r of rects) {
+      if (mine.has(r.key)) {
+        continue;
+      }
+      const d0 = dot(sub(prev, r.c), r.f.normal);
+      const d1 = dot(sub(p, r.c), r.f.normal);
+      if (d0 === d1 || (d0 > 0) === (d1 > 0)) {
+        continue;
+      }
+      const s = d0 / (d0 - d1);
+      const x = add(prev, scale(sub(p, prev), s));
+      const rel = sub(x, r.c);
+      const u = dot(rel, r.f.widthAxis);
+      const v = dot(rel, r.f.heightAxis);
+      if (Math.abs(u) > r.hw || Math.abs(v) > r.hh) {
+        continue;
+      }
+      const outU = r.hw - Math.abs(u);
+      const outV = r.hh - Math.abs(v);
+      const axis = outU <= outV ? r.f.widthAxis : r.f.heightAxis;
+      const sign = (outU <= outV ? u : v) >= 0 ? 1 : -1;
+      const push = (outU <= outV ? outU : outV) + clear;
+      const tAt = (i - 1 + s) / DODGE_PROBE;
+      return {
+        pos: add(x, scale(axis, sign * push)),
+        tangent: normalize(hermiteD1(a.pos, b.pos, m0, m1, tAt), a.tangent),
+        through: r.key,
+      };
+    }
+    prev = p;
+  }
+  return null;
+}
+
+function avoidForeignApertures(doc, knots) {
+  /*
+   * NOT IN A RACEGOW ROOM, THOUGH.
+   *
+   * The paragraph above says flying through an opening you are not scoring
+   * is "not a thing a pilot would ever do". That is true of a field with
+   * gates spread over it and false of a room with sixteen passes in three
+   * units by two. RaceGOW's own animations do it constantly: Track 6's line
+   * crosses the opening under its left bar five times where the lap scores
+   * two, Track 7's goes through the table top five times where the lap
+   * scores two, and both fly within 4 cm of the PVC while they are at it,
+   * which is closer than the clearance this pass would enforce.
+   *
+   * Dodging them cost far more than it saved. On Track 7 twelve steering
+   * knots landed within a third of a unit of each other and the tightest
+   * radius came out at 2 mm, which is not a line anybody can fly. The line in
+   * these rooms is read off the animation and pinned by waypoints, so it does
+   * not need steering by a rule the reference itself breaks.
+   *
+   * What it costs to take it away, measured on all eight: not one tightest
+   * radius moved. Tracks 8 and 5 lose one steering knot each and Track 6
+   * loses twelve, so those three lines are a little shorter and no rougher.
+   * Every track still flies every pass its lap names, in order and the right
+   * way round. A full sized track keeps the pass: its gates are spread over a
+   * field and a line through one of them uninvited really is a mistake.
+   */
+  if (trackClassOf(doc) === 'micro') {
+    return knots;
+  }
+  const rects = apertureRects(doc);
+  if (rects.length < 2 || knots.length < 2) {
+    return knots;
+  }
+  const kScale = doc.settings.tangentScale;
+  /* The same clearance the warning pass gives a barrier, which is class
+   * aware: 0.35 m on a field, 0.10 m in a RaceGOW room. */
+  const clear = tuningFor(trackClassOf(doc)).barrierClearance;
+  const out = knots.slice();
+  for (let guard = 0; guard < DODGE_LIMIT; guard += 1) {
+    let inserted = false;
+    for (let i = 0; i < out.length - 1; i += 1) {
+      const hit = firstCrossing(out[i], out[i + 1], rects, kScale, clear);
+      if (!hit) {
+        continue;
+      }
+      out.splice(i + 1, 0, {
+        pos: hit.pos,
+        tangent: hit.tangent,
+        role: 'wrap',
+        seq: null,
+        index: null,
+        elementId: null,
+      });
+      inserted = true;
+      break;
+    }
+    if (!inserted) {
+      return out;
+    }
+  }
+  return out;
+}
+
+/*
+ * ONCE THROUGH THE GATE, ON TO THE NEXT ONE.
+ *
+ * Green is the entry face and red is the exit face, the same paint the
+ * builder and the race use. The tangent points out of the red face, the
+ * way the quad is going. The Hermite only knows that tangent and the next
+ * knot, so when the next gate sits back behind this one the curve leaves
+ * through the gate and then comes back through the same opening, from the
+ * red side toward the green. That is the wrong way. The pilot has already
+ * passed this gate. The line has to reach the next one by going around
+ * the frame.
+ *
+ * A second pass of the SAME opening is the next gate, not a reversal, so
+ * that leg is left alone. A stack's wrap is a different opening and is
+ * checked like any other leg. The steering knot is not a station.
+ *
+ * The line counts as having left once it is a few centimetres out of the
+ * red face. The return is a later crossing of the plane back toward the
+ * green, inside the opening. One sample step usually straddles that
+ * plane, which is why the two halves of the test are not asked to happen
+ * inside the same step: a whoop gate's hook is shorter than the step.
+ */
+function openingRect(doc, knot) {
+  if (!knot || knot.role !== 'aperture' || !knot.seq || !knot.elementId) {
+    return null;
+  }
+  const el = elementById(doc, knot.elementId);
+  if (!el || kindOf(el) !== KIND.APERTURE) {
+    return null;
+  }
+  const idx = knot.seq.apertureIndex ?? 0;
+  const ap = aperturesOf(el)[idx];
+  if (!ap) {
+    return null;
+  }
+  return {
+    c: apertureCenter(el, idx),
+    f: apertureFrame(el.yaw, el.pitch),
+    hw: ap.clearW / 2,
+    hh: ap.clearH / 2,
+    forward: normalize(knot.tangent, { x: 1, y: 0, z: 0 }),
+  };
+}
+
+/* The next thing the lap actually passes. Wraps are steering, not gates. */
+function nextStation(knots, i) {
+  for (let j = i + 1; j < knots.length; j += 1) {
+    const k = knots[j];
+    if (k.role === 'aperture' || k.role === 'marker' || k.role === 'finish') {
+      return k;
+    }
+  }
+  return null;
+}
+
+function sameOpening(a, b) {
+  if (!a || !b || !a.elementId || a.elementId !== b.elementId) {
+    return false;
+  }
+  return (a.seq?.apertureIndex ?? 0) === (b.seq?.apertureIndex ?? 0);
+}
+
+/* Out of the red face by this much, the line has left the gate. */
+const LEFT_THE_GATE = 0.02;
+
+/*
+ * The first time this leg comes back through `rect` after leaving it.
+ * `from` is the aperture just passed. `end` is the index of the next
+ * station, or the last knot when the leg runs off the end of the line.
+ * Segments are [j, j + 1] for j in [from, end).
+ */
+function reverseOnLeg(knots, from, end, rect, kScale, clear) {
+  let prev = knots[from].pos;
+  let prevD = dot(sub(prev, rect.c), rect.forward);
+  let left = prevD > LEFT_THE_GATE;
+  for (let j = from; j < end; j += 1) {
+    const a = knots[j];
+    const b = knots[j + 1];
+    const span = dist(a.pos, b.pos);
+    if (span < 1e-6) {
+      prev = b.pos;
+      prevD = dot(sub(prev, rect.c), rect.forward);
+      if (prevD > LEFT_THE_GATE) {
+        left = true;
+      }
+      continue;
+    }
+    const m0 = scale(a.tangent, span * kScale);
+    const m1 = scale(b.tangent, span * kScale);
+    for (let i = 1; i <= DODGE_PROBE; i += 1) {
+      const t = i / DODGE_PROBE;
+      const p = hermite(a.pos, b.pos, m0, m1, t);
+      const d = dot(sub(p, rect.c), rect.forward);
+      if (d > LEFT_THE_GATE) {
+        left = true;
+      }
+      /* Back through the plane, and only after the line had actually left.
+       * The departure starts on the plane, so it is not this. */
+      if (left && prevD > 0 && d < 0) {
+        const s = prevD / (prevD - d);
+        const x = add(prev, scale(sub(p, prev), s));
+        const rel = sub(x, rect.c);
+        const u = dot(rel, rect.f.widthAxis);
+        const v = dot(rel, rect.f.heightAxis);
+        if (Math.abs(u) <= rect.hw && Math.abs(v) <= rect.hh) {
+          const outU = rect.hw - Math.abs(u);
+          const outV = rect.hh - Math.abs(v);
+          /* Around a stile, not through the floor. A dead-centre crossing
+           * is equally near either edge, and a single ulp used to send it
+           * down: the bottom of a gate is the ground, so that knot went
+           * underground and the line followed. Over or under only when
+           * that edge is clearly nearer and the knot stays above the floor. */
+          const rise = (v >= 0 ? 1 : -1) * (outV + clear);
+          const riseZ = x.z + rect.f.heightAxis.z * rise;
+          const useVertical = outV + 1e-4 < outU && riseZ >= 0.02;
+          const axis = useVertical ? rect.f.heightAxis : rect.f.widthAxis;
+          const along = useVertical ? v : u;
+          const out = useVertical ? outV : outU;
+          const sign = along > 1e-9 ? 1 : along < -1e-9 ? -1 : 1;
+          const pos = add(x, scale(axis, sign * (out + clear)));
+          /* Sideways out of the opening, then on toward the next knot.
+           * The curve's own tangent here points back through the hole,
+           * which is the direction being refused. */
+          const side = normalize(sub(pos, rect.c), rect.forward);
+          const ahead = normalize(sub(b.pos, pos), side);
+          return {
+            pos,
+            tangent: normalize(add(side, ahead), side),
+            at: j,
+          };
+        }
+      }
+      prev = p;
+      prevD = d;
+    }
+  }
+  return null;
+}
+
+function avoidWrongWay(doc, knots) {
+  if (knots.length < 2) {
+    return knots;
+  }
+  const kScale = doc.settings.tangentScale;
+  const clear = tuningFor(trackClassOf(doc)).barrierClearance;
+  const out = knots.slice();
+  for (let guard = 0; guard < DODGE_LIMIT; guard += 1) {
+    let inserted = false;
+    for (let i = 0; i < out.length - 1; i += 1) {
+      const rect = openingRect(doc, out[i]);
+      if (!rect) {
+        continue;
+      }
+      const station = nextStation(out, i);
+      if (station && sameOpening(out[i], station)) {
+        continue;
+      }
+      let end = out.length - 1;
+      if (station) {
+        for (let j = i + 1; j < out.length; j += 1) {
+          if (out[j] === station) {
+            end = j;
+            break;
+          }
+        }
+      }
+      const hit = reverseOnLeg(out, i, end, rect, kScale, clear);
+      if (!hit) {
+        continue;
+      }
+      out.splice(hit.at + 1, 0, {
+        pos: hit.pos,
+        tangent: hit.tangent,
+        role: 'wrap',
+        seq: null,
+        index: null,
+        elementId: null,
+      });
+      inserted = true;
+      break;
+    }
+    if (!inserted) {
+      return out;
+    }
+  }
+  return out;
+}
+
+/* Cubic Hermite basis, and its first two derivatives. */
+function hermite(p0, p1, m0, m1, t) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  const h00 = 2 * t3 - 3 * t2 + 1;
+  const h10 = t3 - 2 * t2 + t;
+  const h01 = -2 * t3 + 3 * t2;
+  const h11 = t3 - t2;
+  return add(add(scale(p0, h00), scale(m0, h10)), add(scale(p1, h01), scale(m1, h11)));
+}
+
+function hermiteD1(p0, p1, m0, m1, t) {
+  const t2 = t * t;
+  const h00 = 6 * t2 - 6 * t;
+  const h10 = 3 * t2 - 4 * t + 1;
+  const h01 = -6 * t2 + 6 * t;
+  const h11 = 3 * t2 - 2 * t;
+  return add(add(scale(p0, h00), scale(m0, h10)), add(scale(p1, h01), scale(m1, h11)));
+}
+
+function hermiteD2(p0, p1, m0, m1, t) {
+  const h00 = 12 * t - 6;
+  const h10 = 6 * t - 4;
+  const h01 = -12 * t + 6;
+  const h11 = 6 * t - 2;
+  return add(add(scale(p0, h00), scale(m0, h10)), add(scale(p1, h01), scale(m1, h11)));
+}
+
+/*
+ * Build the whole line.
+ *
+ * Returns:
+ *   knots     as above
+ *   samples   [{ pos, s, radius, segment, t }] with s the arc length from
+ *             the start in metres and radius the radius of curvature in
+ *             metres, Infinity on a straight
+ *   length    total arc length in metres
+ *   closed    true when the lap returns to the first element, which is when
+ *             start pads exist or the caller asked for closeLoop
+ *   segments  [{ a, b, from, to }] knot pairs, for the warning pass
+ *
+ * closeLoop is passed straight to buildKnots and explained there. It is off
+ * by default, so every existing caller gets exactly what it got before.
+ */
+export function buildPath(doc, { closeLoop = false } = {}) {
+  const knots = buildKnots(doc, { closeLoop });
+  const per = Math.max(4, Math.round(doc.settings.samplesPerSegment));
+  const kScale = doc.settings.tangentScale;
+  const samples = [];
+  const segments = [];
+
+  if (knots.length < 2) {
+    return { knots, samples, segments, length: 0, closed: false, tightest: null };
+  }
+
+  let s = 0;
+  let prev = null;
+  let tightest = null;
+
+  for (let i = 0; i < knots.length - 1; i += 1) {
+    const a = knots[i];
+    const b = knots[i + 1];
+    const span = dist(a.pos, b.pos);
+    /* Two knots on top of each other have no segment. Skip rather than
+     * divide by zero; warnings.js reports the coincidence. */
+    if (span < 1e-6) {
+      segments.push({ a, b, from: i, to: i + 1, degenerate: true });
+      continue;
+    }
+    const m0 = scale(a.tangent, span * kScale);
+    const m1 = scale(b.tangent, span * kScale);
+    segments.push({ a, b, from: i, to: i + 1, degenerate: false });
+
+    const last = i === knots.length - 2;
+    const steps = last ? per : per - 1;
+    for (let j = 0; j <= steps; j += 1) {
+      const t = j / per;
+      const tt = last && j === steps ? 1 : t;
+      const pos = hermite(a.pos, b.pos, m0, m1, tt);
+      const d1 = hermiteD1(a.pos, b.pos, m0, m1, tt);
+      const d2 = hermiteD2(a.pos, b.pos, m0, m1, tt);
+      const speed = length(d1);
+      const kappa = speed > 1e-9 ? length(cross(d1, d2)) / (speed * speed * speed) : 0;
+      const radius = kappa > 1e-9 ? 1 / kappa : Infinity;
+      if (prev) {
+        s += dist(prev, pos);
+      }
+      prev = pos;
+      samples.push({ pos, s, radius, segment: i, t: tt });
+      if (tightest == null || radius < tightest.radius) {
+        tightest = { radius, s, pos, segment: i };
+      }
+    }
+  }
+
+  const start = startPadsOf(doc);
+  return {
+    knots,
+    samples,
+    segments,
+    length: s,
+    closed: (Boolean(start) || closeLoop) && doc.sequence.length > 0,
+    tightest,
+  };
+}
+
+/*
+ * THE SCORING SQUARE OF ONE MARKER PASS, read off the knot that pass made.
+ *
+ * The owner's report: "when i add a pole, the virtual gate that appears
+ * [should] pivot around the pole, it currently rotates but the actual gate
+ * does not rotate around the pole". It is the builder that was wrong, not
+ * the game. The line through a marker the author has turned by hand runs
+ * square to the pass direction (travelPastFixedMarker above), so the knot's
+ * tangent swings with the marker, and the game scores the square in the
+ * knot's frame (the marker station in src/game/trackdoc.js), which is a
+ * square hinged on the pole: it swings round the pole like a door. Both of
+ * the builder's views drew it facing the chain direction instead, next knot
+ * minus previous, so they showed a square sliding round the pole while
+ * keeping its heading, which is not the hole being scored.
+ *
+ * So the views read the square from here and the knot is its one source:
+ * the plane faces the knot's tangent, the width runs across it, and the
+ * centre sits `outward` beyond the knot along the pass direction so the
+ * inner edge stays on the pole. That is exactly the station trackdoc.js
+ * builds and the pane stage.js lights. Null for a waypoint and for any pass
+ * too close to count, which is the same test both of those make.
+ */
+export function markerSquare(doc, knot) {
+  if (!knot || knot.role !== 'marker' || !knot.seq || !knot.markerPos) {
+    return null;
+  }
+  const el = elementById(doc, knot.seq.elementId);
+  const clearance = knot.seq.clearance ?? 0;
+  if (!el || el.type === 'waypoint' || clearance < 0.05) {
+    return null;
+  }
+  const dims = virtualApertureDims(el, knot.seq, trackClassOf(doc));
+  const normal = normalize({ x: knot.tangent.x, y: knot.tangent.y, z: 0 }, { x: 1, y: 0, z: 0 });
+  const off = { x: knot.pos.x - knot.markerPos.x, y: knot.pos.y - knot.markerPos.y, z: 0 };
+  const side = length(off) > 1e-9 ? normalize(off) : leftOf(normal);
+  const reach = clearance + dims.outward;
+  return {
+    el,
+    dims,
+    normal,
+    widthAxis: leftOf(normal),
+    side,
+    centre: {
+      x: knot.markerPos.x + side.x * reach,
+      y: knot.markerPos.y + side.y * reach,
+      z: knot.markerPos.z + dims.centerH,
+    },
+  };
+}
+
+/*
+ * THE HEADING A MARKER IS TURNED FROM: its own yaw once the author has
+ * turned it, and until then the way its square actually sits, pole to knot
+ * of its first pass. See shownYaw in app.js for why the difference matters.
+ * Anything that is not a scored marker answers its own yaw.
+ */
+export function passYawOf(doc, path, el) {
+  if (!el || kindOf(el) !== KIND.MARKER || el.type === 'waypoint' || el.yawOverridden) {
+    return el?.yaw ?? 0;
+  }
+  const seq = doc.sequence.find((s) => s.elementId === el.id);
+  const knot = seq ? knotForSeq(path, seq.id) : null;
+  if (!knot || !knot.markerPos) {
+    return el.yaw;
+  }
+  const dx = knot.pos.x - knot.markerPos.x;
+  const dy = knot.pos.y - knot.markerPos.y;
+  return Math.hypot(dx, dy) > 1e-9 ? Math.atan2(dy, dx) : el.yaw;
+}
+
+/* The knot a sequence entry made, or null. A marker knot, not the closing
+ * copy of it: the finish knot carries the first entry again. */
+export function knotForSeq(path, seqId) {
+  if (!path || !path.knots) {
+    return null;
+  }
+  return path.knots.find((k) => k.seq && k.seq.id === seqId && k.role !== 'finish') ?? null;
+}
+
+/*
+ * The elevation profile: height above the ground against distance along the
+ * lap. Thinned to at most `maxPoints` so the chart draws a line rather than
+ * a smear, keeping the extremes because a profile that loses its highest
+ * point is not a profile.
+ */
+export function elevationProfile(path, maxPoints = 400) {
+  const n = path.samples.length;
+  if (!n) {
+    return { points: [], minZ: 0, maxZ: 0, length: 0 };
+  }
+  const stride = Math.max(1, Math.ceil(n / maxPoints));
+  /*
+   * Two passes, because the extremes have to be KNOWN before the thinning
+   * can be told to keep them. One pass computed minZ and maxZ correctly and
+   * then emitted purely on the stride, so the peak of the course was
+   * reported in the axis labels and missing from the line under them
+   * whenever it did not happen to land on a multiple of the stride.
+   */
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  let minIdx = 0;
+  let maxIdx = 0;
+  for (let i = 0; i < n; i += 1) {
+    const z = path.samples[i].pos.z;
+    if (z < minZ) {
+      minZ = z;
+      minIdx = i;
+    }
+    if (z > maxZ) {
+      maxZ = z;
+      maxIdx = i;
+    }
+  }
+  const points = [];
+  for (let i = 0; i < n; i += 1) {
+    if (i % stride === 0 || i === n - 1 || i === minIdx || i === maxIdx) {
+      const p = path.samples[i];
+      points.push({ s: p.s, z: p.pos.z });
+    }
+  }
+  return { points, minZ, maxZ, length: path.length };
+}
+
+/* Distinct elements that appear in the flying order. A ladder flown twice
+ * is one element and two entries; quoting only one of those is how a course
+ * description ends up wrong. The results panel now breaks the field down by
+ * type, and still reports the entry count separately as "in the order". */
+export function sequencedElementCount(doc) {
+  return new Set(doc.sequence.map((s) => s.elementId)).size;
+}

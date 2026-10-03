@@ -1,0 +1,52 @@
+WebFPV Race Name Picker: what came from where
+=============================================
+
+This repository is licensed GPL-3.0-or-later (see LICENSE). Every source file
+carries the header. This file records the parts that are somebody else's, and
+how each one is held, so that the next session can see it.
+
+The simulator's code, under sim/
+--------------------------------
+
+The race field, the post chain, the cel material, the five inch airframe, the
+start block, the banner painters, the lettering and the track document
+reader are WebFPVSimulator's own code (Mathew-Harvey/WebFPVSimulator,
+GPL-3.0-or-later), copied byte for byte by scripts/vendor.js into sim/, laid
+out from the simulator's repository root so every relative import resolves
+without an edit. sim/MANIFEST.json records the simulator's commit, whether
+its tree was clean when it was copied, and the SHA-256 of every file; npm run
+lint fails on a file that does not match. It is regenerated, never edited. A
+change the picker needs in that code is a change to the simulator.
+
+Nothing under sim/ is the simulator's compiled flight controller or its
+flight physics: the closure of what the picker imports has no WebAssembly in
+it (airframes.js mentions the simulator's module in comments) and no code that
+reads a gamepad. A few of its modules, race.js among them, can touch
+localStorage when the simulator's own game asks them to; the picker builds
+none of those objects and every storage access it makes is its own. The race
+here is a plan (src/choreo.js), and nothing in this repository flies a quad
+by simulation.
+
+three.js
+--------
+
+three.js r160 and its addons (examples/jsm) are MIT licensed, Copyright (c)
+2010-2023 three.js authors. They are loaded from jsDelivr by the page's
+import map and are not copied into this repository. The version is the
+family's and is pinned: sim/src/render/celmat.js patches one of three's shader
+chunks at import and throws if the text changed.
+
+The family's furniture
+----------------------
+
+The palette, the type stack and the lettering are the family's: the tokens
+are copied from the simulator's index.html and the board's page, and the
+lettering is drawn by sim/src/ui/lettering.js. No font file ships: the page
+uses the system's own faces.
+
+What is not here
+----------------
+
+No partner marks. No Betaflight name or logo: this app runs no Betaflight
+code. Nothing is loaded from anywhere but the same origin and the one CDN
+above, and no name or logo a person types or drops ever leaves their browser.
