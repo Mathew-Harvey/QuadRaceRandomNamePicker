@@ -106,11 +106,35 @@ export function createHud({ reduced = false } = {}) {
     }).filter((b) => b.w > 0 && b.h > 0);
   }
 
-  /* One row and one tag for each entry, in the entry's own colour, built when the list is set and never again until it changes. */
+  /*
+   * One row and one tag for each entry, in the entry's own colour. The list is
+   * set again on every keystroke in the setup sheet, so the nodes that are
+   * there are kept and written to only where a name changed: a tag rebuilt on
+   * every letter would blink off for a frame each time.
+   */
   function setField(names) {
-    tower.replaceChildren();
-    tagLayer.replaceChildren();
-    rows = names.map((name, i) => {
+    if (!restRow) {
+      restRow = el('li', 'row rest');
+      restRow.append(el('span', 'pl'), el('i', 'chip'), el('span', 'nm'), el('span', 'gp'));
+      restRow.hidden = true;
+      tower.append(restRow);
+    }
+    while (rows.length > names.length) {
+      rows.pop().li.remove();
+      tags.pop().node.remove();
+    }
+    names.forEach((name, i) => {
+      if (rows[i]) {
+        if (rows[i].name !== name) {
+          rows[i].name = name;
+          rows[i].nm.textContent = name;
+          tags[i].label.textContent = name;
+          /* A new word is a new width, which is read again when the tag is next shown. */
+          tags[i].shown = false;
+          tags[i].node.hidden = true;
+        }
+        return;
+      }
       const li = el('li', 'row');
       const place = el('span', 'pl');
       const swatch = el('i', 'chip');
@@ -119,21 +143,20 @@ export function createHud({ reduced = false } = {}) {
       const gap = el('span', 'gp');
       li.append(place, swatch, nm, gap);
       li.hidden = true;
-      tower.append(li);
-      return { li, place, gap, shown: false, last: { place: '', gap: '' }, y: -1 };
-    });
-    restRow = el('li', 'row rest');
-    restRow.append(el('span', 'pl'), el('i', 'chip'), el('span', 'nm'), el('span', 'gp'));
-    restRow.hidden = true;
-    tower.append(restRow);
-    tags = names.map((name, i) => {
+      tower.insertBefore(li, restRow);
+      rows[i] = {
+        li, place, nm, gap, name, shown: false, last: { place: '', gap: '' }, y: -1,
+      };
       const node = el('div', 'tag');
-      const swatch = el('i', 'chip');
-      swatch.style.background = liveryCss(i);
-      node.append(swatch, el('b', '', String(i + 1)), el('span', '', name));
+      const chipDot = el('i', 'chip');
+      chipDot.style.background = liveryCss(i);
+      const label = el('span', '', name);
+      node.append(chipDot, el('b', '', String(i + 1)), label);
       node.hidden = true;
       tagLayer.append(node);
-      return { node, w: 90, h: 20, shown: false, x: 0, y: 0 };
+      tags[i] = {
+        node, label, w: 90, h: 20, shown: false, x: 0, y: 0,
+      };
     });
     measure();
   }
@@ -169,6 +192,8 @@ export function createHud({ reduced = false } = {}) {
         row.li.hidden = false;
         row.shown = true;
         row.y = -1;
+        /* A row can only be measured once it is on the page, and its height is a number of --s, which is not the number it started as. */
+        rowHeight = row.li.offsetHeight || rowHeight;
       }
       const place = String(p + 1);
       const gap = formatGap(gaps[p]);

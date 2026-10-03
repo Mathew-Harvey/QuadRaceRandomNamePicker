@@ -311,3 +311,27 @@ Sound, the calm rail for reduced motion (today the lights cut to the rail's firs
 ### Open questions for the owner
 
 The site icon's accent (the page ships `data:,`), whether the picker is mounted under `webfpv.org/<mount>/` (every URL is already relative), and whether any official partner mark appears here (none does: this app runs no Betaflight code and a placement is agreed one at a time). No decision in this milestone needed the owner: nothing changed the algorithm, added a dependency, showed anything a sponsor could read as an endorsement, or touched another repository.
+
+
+## 2026-10-03 | milestone 4, second pass | What the brief says that the first pass did not do
+
+I read the brief's screens and show sections against the page again after the push, line by line, and found five things it asks for that I had not built, or had built the other way round.
+
+- **Arming is off past fifty lines.** The brief says a 51st line says fifty is the most the grid holds "and arming is disabled". I had let it arm with the first fifty and struck the rest through, and my own check held that. The line is struck, the status says fifty is the most and how many lines to take off, and the arm switch is off until they are gone. The check now says so, and also that "Numbers 1 to N" turns it back on.
+- **The event title is lettered on the results page**, top right of the big panel, as it is on the gantry.
+- **The draw log has a clear control** (it asks twice), and each entry copies and saves its receipt as well as replaying and verifying.
+- **With no WebGL there is a countdown**, 3, 2, 1, between the seal and the results page. It was the seal and then the page.
+- **The quads on the grid carry their names while the sheet is up.** "Each name typed drops a quad onto the next block with its tag." The tags go through the same lens and the same placement as the race's, and the sheet's own box is not a thing they avoid, because the sheet is over them. The drop in and the lift off are milestone 5's.
+
+Found on the way: the tower laid its rows out at the default row height, which is 28 px, and the real height is 28 times `--s`, so the tenth row was nine pixels off. A row is measured when it first shows.
+
+### Measured
+
+    npm test        125 of 125 pass
+    npm run lint    16 of 16 clean
+    node scripts/shots.js   91 of 91 checks, seven scenarios (flow 31, sheet 17, reload 11, actions 10, bare 10, phone 6, reduced 6),
+                            and check 13 read the page 394 to 457 times through a race
+
+### What went wrong
+
+- **A check that passed for the wrong reason, in my own command.** I chained the unit tests, the lint and the shots with `&&` behind a `| grep` and a `| tail`, and a pipeline's status is its last command's, so a failing suite would not have stopped the chain. I ran each on its own afterwards, with its own exit code, and put that in this entry's numbers.

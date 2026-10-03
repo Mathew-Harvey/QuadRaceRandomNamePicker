@@ -140,6 +140,24 @@ async function copy(text) {
   }
 }
 
+/* The receipt as text on the clipboard, and whether it got there. The sheet's draw log offers the same two things this page does. */
+export function copyReceipt(receipt) {
+  return copy(receiptText(receipt));
+}
+
+/* The receipt as a JSON file, named for its fingerprint, saved through a link nobody sees. */
+export function saveReceipt(receipt) {
+  const blob = new Blob([receiptJSON(receipt)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = el('a');
+  a.href = url;
+  a.download = `webfpv-picker-${fingerprint(receipt.commitment).replace(/ /g, '')}.json`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
 /*
  * Build the page.
  *
@@ -180,6 +198,10 @@ export function buildResults({
     `${replay ? 'Replay · ' : ''}Winner · ${receipt.length || plan.length} s · ${names.length} names`);
   const winnerName = el('h2', 'winner-name', names[win]);
   big.append(shot, focus, narration, winnerName);
+  /* The event title, if there is one, lettered across the top of the picture the way the gantry has it. */
+  if (receipt.title) {
+    big.append(el('h2', 'event-title lettered', receipt.title));
+  }
   root.append(big);
 
   /* Second and third, when they are drawn. */
@@ -260,7 +282,7 @@ export function buildResults({
     const copyBtn = el('button', 'btn', 'Copy receipt');
     copyBtn.type = 'button';
     copyBtn.addEventListener('click', async () => {
-      const ok = await copy(receiptText(receipt));
+      const ok = await copyReceipt(receipt);
       copyBtn.textContent = ok ? 'Copied' : 'Select it and copy';
       setTimeout(() => {
         copyBtn.textContent = 'Copy receipt';
@@ -268,17 +290,7 @@ export function buildResults({
     });
     const dlBtn = el('button', 'btn', 'Download receipt');
     dlBtn.type = 'button';
-    dlBtn.addEventListener('click', () => {
-      const blob = new Blob([receiptJSON(receipt)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = el('a');
-      a.href = url;
-      a.download = `webfpv-picker-${fingerprint(receipt.commitment).replace(/ /g, '')}.json`;
-      document.body.append(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-    });
+    dlBtn.addEventListener('click', () => saveReceipt(receipt));
     const verify = el('a', 'btn primary', 'Verify');
     verify.href = `verify.html#${receiptFragment(receipt)}`;
     btns.append(copyBtn, dlBtn, verify);

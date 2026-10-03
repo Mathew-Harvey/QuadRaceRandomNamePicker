@@ -68,7 +68,7 @@ import {
   oddsLines, photoWindow, placeTags, readNames, standings, winnersAllowed,
 } from './show.js';
 import { createHud } from './hud.js';
-import { buildResults } from './results.js';
+import { buildResults, copyReceipt, saveReceipt } from './results.js';
 import { letterTitles } from './titles.js';
 import { createStore, pageStorage } from './store.js';
 import {
@@ -138,6 +138,7 @@ const ui = {
   log: $('log'),
   logCount: $('log-count'),
   logFoot: $('log-foot'),
+  logClear: $('log-clear'),
   forget: $('forget'),
   present: $('present'),
   emptyNote: $('empty-note'),
@@ -251,6 +252,10 @@ function renderStatus() {
     bad = notice.bad;
   } else if (building) {
     text = buildPercent > 0 ? `Building the field ${Math.round(buildPercent * 100)}%` : 'Building the field.';
+  } else if (list.over) {
+    const extra = list.names.length - LIMITS.maxNames;
+    text = `Fifty is the most the grid holds. Take off the ${extra === 1 ? 'last line' : `last ${extra} lines`} to arm.`;
+    bad = true;
   } else if (n < LIMITS.minNames) {
     text = n === 0 ? 'Add at least two names.' : 'Add one more name.';
   } else {
@@ -259,7 +264,7 @@ function renderStatus() {
   }
   ui.status.textContent = text;
   ui.status.classList.toggle('bad', bad);
-  ui.arm.disabled = !(cryptoOk && !building && state === 'setup' && n >= LIMITS.minNames);
+  ui.arm.disabled = !(cryptoOk && !building && state === 'setup' && n >= LIMITS.minNames && !list.over);
 }
 
 /* ------------------------------------------------------------------ */
@@ -301,15 +306,18 @@ let namesSaver = 0;
 /* `save` is false for a list that was just forgotten, which must not be written straight back. */
 function onNames(save = true) {
   list = readNames(ui.names.value);
+  if (!show) {
+    hud.setField(list.entries);
+  }
   const n = list.entries.length;
   renderGutter();
   ui.count.textContent = `${n} of ${LIMITS.maxNames}`;
   ui.count.classList.toggle('full', n >= LIMITS.maxNames);
-  ui.countNote.textContent = list.over ? '(the rest are not on the grid)' : '';
+  ui.countNote.textContent = list.over ? '(the grid holds fifty)' : '';
   ui.warn.hidden = !list.over;
   if (list.over) {
     const extra = list.names.length - LIMITS.maxNames;
-    ui.warn.textContent = `Only the first ${LIMITS.maxNames} names are used. ${extra === 1 ? 'One line is' : `${extra} lines are`} past the limit and struck through.`;
+    ui.warn.textContent = `Fifty is the most the grid holds. ${extra === 1 ? 'One line is' : `${extra} lines are`} past it, struck through, and arming is off until ${extra === 1 ? 'it is' : 'they are'} gone.`;
   }
 
   /* More winners than there are places to give is not on offer. */
@@ -544,7 +552,18 @@ function renderLog() {
       });
       const verify = el('a', 'text', 'Verify');
       verify.href = `verify.html#${receiptFragment(receipt)}`;
-      acts.append(replay, verify);
+      const copyIt = el('button', 'text', 'Copy receipt');
+      copyIt.type = 'button';
+      copyIt.addEventListener('click', async () => {
+        copyIt.textContent = (await copyReceipt(receipt)) ? 'Copied' : 'Could not copy';
+        setTimeout(() => {
+          copyIt.textContent = 'Copy receipt';
+        }, 1800);
+      });
+      const saveIt = el('button', 'text', 'Save');
+      saveIt.type = 'button';
+      saveIt.addEventListener('click', () => saveReceipt(receipt));
+      acts.append(replay, verify, copyIt, saveIt);
       li.append(acts);
       return li;
     }));
@@ -657,7 +676,7 @@ async function arm() {
     return;
   }
   const names = list.entries.slice();
-  if (names.length < LIMITS.minNames) {
+  if (names.length < LIMITS.minNames || list.over) {
     return;
   }
   const wanted = Math.min(winners, winnersAllowed(names.length));
@@ -797,6 +816,31 @@ function overlay(t) {
 
 const scratch = {};
 const spot = {};
+const NO_TAGS = new Map();
+
+/*
+ * The names over the quads on the grid while the sheet is up: where each
+ * block is on the glass, through the same lens as every tag, placed so none
+ * covers another, first entries first. The positions are the fleet's own,
+ * which it writes in Three's frame, turned back into the plan's here.
+ */
+function paddockTags(n) {
+  const { w, h } = hud.size;
+  const sizes = hud.tagSizes();
+  const at = world.fleet.positions;
+  const items = [];
+  for (let i = 0; i < n && i < sizes.length; i += 1) {
+    world.screenOf(at[i * 3], -at[i * 3 + 2], at[i * 3 + 1] + TAG_LIFT, spot);
+    if (!spot.behind && spot.x > -40 && spot.x < w + 40 && spot.y > -40 && spot.y < h + 40) {
+      items.push({
+        id: i, x: spot.x, y: spot.y - 3, w: sizes[i].w, h: sizes[i].h, force: false,
+      });
+    }
+  }
+  hud.updateTags(placeTags(items, {
+    l: 4, t: 4, r: w - 4, b: h - 4,
+  }, 3));
+}
 
 function frame(now) {
   requestAnimationFrame(frame);
@@ -826,6 +870,7 @@ function step(dt) {
       world.frame({
         shot: 'paddock', t: orbit, count: list.entries.length, spin: 0, dt, wall, lamps: LAMPS_OFF, offset,
       });
+      paddockTags(list.entries.length);
     }
     return;
   }
@@ -845,16 +890,27 @@ function step(dt) {
         world.frame({
           shot: 'paddock', t: orbit, count, spin: 0, dt, wall, lamps: LAMPS_OFF, offset,
         });
+        paddockTags(count);
       }
       if (show.u >= (REDUCED() ? SEAL_HOLD_STILL : SEAL_HOLD)) {
         hud.settleSeal();
         show.u = 0;
-        if (!world) {
-          finishShow();
-          break;
-        }
-        show.phase = 'lights';
+        hud.updateTags(NO_TAGS);
+        show.phase = world ? 'lights' : 'count';
         setState('lights');
+      }
+      break;
+    }
+    case 'count': {
+      /* No field to fly: the seal, a countdown, and the page. */
+      show.u += dt;
+      const left = 3 - Math.floor(show.u);
+      if (left >= 1 && left !== show.counted) {
+        show.counted = left;
+        hud.beat(String(left));
+      }
+      if (show.u >= 3) {
+        finishShow();
       }
       break;
     }
@@ -1062,6 +1118,7 @@ function leaveResults(toSetup = true) {
     return;
   }
   show = null;
+  hud.setField(list.entries);
   hud.clear();
   hud.hideSeal();
   hud.replayFlag(false);
@@ -1211,6 +1268,25 @@ function wire() {
 
   ui.arm.addEventListener('click', arm);
   hud.skip.addEventListener('click', skip);
+
+  /* Clearing the log asks twice, as forgetting does: a list of receipts is the only copy there is. */
+  let clearTimer = 0;
+  ui.logClear.addEventListener('click', () => {
+    if (ui.logClear.dataset.sure !== 'yes') {
+      ui.logClear.dataset.sure = 'yes';
+      ui.logClear.textContent = 'Really clear? Click again';
+      clearTimer = setTimeout(() => {
+        delete ui.logClear.dataset.sure;
+        ui.logClear.textContent = 'Clear this list';
+      }, 4000);
+      return;
+    }
+    clearTimeout(clearTimer);
+    delete ui.logClear.dataset.sure;
+    ui.logClear.textContent = 'Clear this list';
+    store.log.clear();
+    renderLog();
+  });
 
   let forgetTimer = 0;
   ui.forget.addEventListener('click', () => {

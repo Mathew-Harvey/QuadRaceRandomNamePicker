@@ -307,7 +307,8 @@ async function flow() {
     check('11', 'the gutter numbers and colours all fifty', rows === 50, String(rows));
     check('11', 'a name twice is marked, and its odds are said', (await page.evaluate("document.querySelectorAll('#gutter .dup').length")) === 2 && (await text(page, '#odds')).includes('Sam has 2 entries'), await text(page, '#odds'));
     check('11', 'the arm switch is on', !(await page.evaluate("document.getElementById('arm').disabled")), await text(page, '#status'));
-    await page.sleep(1500);
+    await page.until("document.querySelectorAll('#hud-tags .tag:not([hidden])').length >= 5", 20000, 'names over the quads on the grid');
+    check('11', 'the quads on the grid carry their names', (await page.evaluate("[...document.querySelectorAll('#hud-tags .tag:not([hidden]) span')].every((n) => n.textContent.length > 0)")));
     await shot(page, '02-paddock-50-names-4-logos');
 
     /* Arm. The seal, on the glass, before anything else. */
@@ -383,6 +384,7 @@ async function flow() {
       winner: document.querySelector('.winner-name').textContent,
       order: [...document.querySelectorAll('#results .order li .n')].map((n) => n.textContent),
       print: document.querySelector('.seal-panel .print').textContent,
+      title: document.querySelector('#results .event-title')?.textContent ?? null,
       tick: Boolean(document.querySelector('.seal-panel .tick:not(.bad)')),
       bad: Boolean(document.querySelector('.seal-panel .tick.bad')),
       first: document.querySelector('#results .order li .t').textContent,
@@ -391,6 +393,7 @@ async function flow() {
       drawn: Boolean(document.querySelector('#results canvas.shot') && document.querySelector('#results canvas.shot').width > 100),
     }))()`);
     check('11', 'the winner on the page is the winner in the receipt', shown.winner === winner, `${shown.winner} against ${winner}`);
+    check('11', 'the event title is on the page too', shown.title === 'Friday night heat', String(shown.title));
     check('11', 'all fifty finish in the order that was drawn', shown.order.length === 50 && shown.order.every((n, p) => n === receipt.names[receipt.order[p]]), `${shown.order.length} rows`);
     check('11', 'the seal on the page is the seal that was on the glass, ticked', shown.print === sealed && shown.tick && !shown.bad, `${shown.print} against ${sealed}`);
     check('11', 'the winner\'s time on the page is the time the clock stopped at', shown.first === last.clock || shown.first === (await text(page, '#hud-clock')), `${shown.first} against ${await text(page, '#hud-clock')}`);
@@ -488,6 +491,8 @@ async function sheet() {
     await page.click('#split-yes');
     await page.until("document.getElementById('names').value === 'Sam\\nAna\\nRaj\\nMia'", 5000, 'the list split');
     check('sheet', 'a comma list is offered a split, and split into lines', (await text(page, '#count')) === '4 of 50' && await page.evaluate("document.getElementById('split-offer').hidden"));
+    await page.until("document.querySelectorAll('#hud-tags .tag:not([hidden])').length >= 3", 20000, 'names over the quads');
+    check('sheet', 'each name typed is over its quad on the grid', (await page.evaluate("[...document.querySelectorAll('#hud-tags .tag:not([hidden])')].map((t) => t.textContent).join('|')")).includes('Sam'));
     await paste(page, 'Smith, John');
     await page.until("!document.getElementById('split-offer').hidden", 5000, 'the offer again');
     await page.click('#split-no');
@@ -508,7 +513,7 @@ async function sheet() {
 
     await paste(page, Array.from({ length: 55 }, (_, i) => `N${i + 1}`).join('\n'));
     await page.until("document.getElementById('count').textContent === '50 of 50'", 5000, 'fifty');
-    check('sheet', 'the fifty first line is struck and said, and the grid is the first fifty', !(await page.evaluate("document.getElementById('warn').hidden")) && (await page.evaluate("document.querySelectorAll('#gutter .g.extra').length")) === 5, await text(page, '#warn'));
+    check('sheet', 'the fifty first line is struck and said, the grid is the first fifty, and arming is off', !(await page.evaluate("document.getElementById('warn').hidden")) && (await page.evaluate("document.querySelectorAll('#gutter .g.extra').length")) === 5 && (await page.evaluate("document.getElementById('arm').disabled")) && (await text(page, '#status')).startsWith('Fifty is the most'), `${await text(page, '#warn')} | ${await text(page, '#status')}`);
     await shot(page, 's2-over-fifty');
 
     await page.evaluate("document.getElementById('tickets-n').value = '12'");
@@ -516,7 +521,7 @@ async function sheet() {
     check('sheet', 'numbers 1 to N asks before it replaces a list', (await text(page, '#tickets-fill')) === 'Replace the list?' && (await text(page, '#count')) === '50 of 50');
     await page.click('#tickets-fill');
     await page.until("document.getElementById('names').value.split('\\n').length === 12", 5000, 'twelve numbers');
-    check('sheet', 'and then replaces it with 1 to N', (await page.evaluate("document.getElementById('names').value")) === Array.from({ length: 12 }, (_, i) => String(i + 1)).join('\n'));
+    check('sheet', 'and then replaces it with 1 to N, which turns arming back on', (await page.evaluate("document.getElementById('names').value")) === Array.from({ length: 12 }, (_, i) => String(i + 1)).join('\n') && !(await page.evaluate("document.getElementById('arm').disabled")));
 
     /* A file that is not a picture says so in its slot. */
     const bad = join(dir, 'notes.txt');
@@ -691,6 +696,17 @@ async function reload() {
     await page.until("document.body.dataset.state === 'results'", 30000, 'the results');
     check('reload', 'it ends on the winner the draw gave', (await text(page, '.winner-name')) === before.names[before.order[0]]);
     check('reload', 'and it wrote nothing', (await log(page)).length === 1);
+    await page.evaluate("[...document.querySelectorAll('#results .btn')].find((b) => b.textContent.startsWith('Edit names')).click()");
+    await page.until("document.body.dataset.state === 'setup'", 15000, 'the sheet');
+    await sheetIn(page);
+    const controls = await page.evaluate("[...document.querySelectorAll('#log .acts > *')].map((n) => n.textContent).join('|')");
+    check('reload', 'each draw in the log can be replayed, verified, copied and saved', controls === 'Replay|Verify|Copy receipt|Save', controls);
+    await page.evaluate("document.getElementById('log-box').open = true");
+    await page.click('#log-clear');
+    check('reload', 'clearing the log asks twice', (await text(page, '#log-clear')).startsWith('Really clear') && (await log(page)).length === 1);
+    await page.click('#log-clear');
+    await page.until("document.querySelectorAll('#log li.log-empty').length === 1", 5000, 'an empty log');
+    check('reload', 'and then the log is empty, here and in the store', (await log(page)).length === 0 && (await text(page, '#log-count')) === '');
     console12('reload', page);
   } finally {
     await page.close();
@@ -752,6 +768,18 @@ async function bare() {
       check('bare', `${label}: the sheet says the race cannot be shown, and still lets a draw be made`, (await text(page, '#status')).includes('cannot show the race'), await text(page, '#status'));
       await shot(page, `b1-${label.replace(/\W+/g, '-')}-sheet`);
       await page.click('#arm');
+      const counted = [];
+      for (let i = 0; i < 400; i += 1) {
+        const s = await page.evaluate("({ state: document.body.dataset.state, beat: document.getElementById('hud-beat').textContent })");
+        if (/^[123]$/.test(s.beat) && !counted.includes(s.beat)) {
+          counted.push(s.beat);
+        }
+        if (s.state === 'results') {
+          break;
+        }
+        await page.sleep(60);
+      }
+      check('bare', `${label}: a countdown, 3 2 1, stands in for the race`, counted.join('') === '321', counted.join(' '));
       await page.until("document.body.dataset.state === 'results'", 60000, 'the results, without a race');
       const receipt = (await log(page))[0];
       check('bare', `${label}: the results are the draw's, on a page with no picture`, (await text(page, '.winner-name')) === receipt.names[receipt.order[0]] && await exists(page, '.rp.big.plain'));
