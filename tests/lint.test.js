@@ -25,7 +25,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ORDINARY_RANDOM, WEB_CRYPTO, domTouches, importsIn, linesMatching, stripComments, urlProblems,
+  ORDINARY_RANDOM, WEB_CRYPTO, domTouches, importsIn, linesMatching, moduleSpecifiers, stripComments, urlProblems,
 } from '../scripts/lint.js';
 
 /* The things the rules look for, assembled here so this file is clean. */
@@ -107,4 +107,20 @@ test('both dashes are found by line, and a hyphen is not', () => {
   const dash = new RegExp(`[${EN}${EM}]`);
   assert.deepEqual(linesMatching(`a\nb ${EM} c\nd\ne ${EN} f`, dash), [2, 4]);
   assert.deepEqual(linesMatching('a - b -- c', dash), []);
+});
+
+test('every module a file names is found, in every spelling, and not in a comment', () => {
+  const found = moduleSpecifiers(`
+    // import nope from './comment.js';
+    import { a, b } from './one.js';
+    import * as c from "./two.js";
+    import d from './three.js';
+    import './four.js';
+    export { e } from './five.js';
+    export * from './six.js';
+    const m = await import('./seven.js');
+    const s = 'import x from "./in-a-string.js"';
+  `);
+  assert.deepEqual(found.sort(), ['./five.js', './four.js', './one.js', './seven.js', './six.js', './three.js', './two.js']);
+  assert.deepEqual(moduleSpecifiers('const a = 1;'), []);
 });

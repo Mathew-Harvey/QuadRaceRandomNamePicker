@@ -155,6 +155,16 @@ export function importsIn(text) {
   ].length;
 }
 
+/* Every module a source file names, static, re-exported or dynamic, as written. */
+export function moduleSpecifiers(text) {
+  const code = stripComments(text);
+  return [
+    ...code.matchAll(/(?:^|[\n;{}])\s*import\s*(?:[^'"`;]*?\sfrom\s*)?['"`]([^'"`]+)['"`]/g),
+    ...code.matchAll(/\bexport\s[^;'"`]*?\sfrom\s*['"`]([^'"`]+)['"`]/g),
+    ...code.matchAll(/\bimport\s*\(\s*['"`]([^'"`]+)['"`]/g),
+  ].map((m) => m[1]);
+}
+
 /* Identifiers that mean the module touches a page, a store or a window. */
 export function domTouches(text) {
   const code = stripComments(text);
@@ -347,6 +357,23 @@ async function run() {
     );
   } else {
     check('src/draw.js imports nothing and touches no page', 'skip', 'src/draw.js is not written yet');
+  }
+
+  /*
+   * verify.html IMPORTS src/draw.js AND NOTHING ELSE.
+   *
+   * The page a sceptic opens to check a receipt is meant to be one file whose
+   * only dependency is the one short file that decides what the ticks say.
+   */
+  if (files.includes('verify.html')) {
+    const specs = [...new Set(moduleSpecifiers(read('verify.html')))];
+    check(
+      'verify.html imports src/draw.js and nothing else',
+      specs.length === 1 && specs[0] === './src/draw.js',
+      specs.length === 1 && specs[0] === './src/draw.js' ? 'one import, ./src/draw.js' : `IMPORTS ${specs.join(', ') || 'nothing'}`,
+    );
+  } else {
+    check('verify.html imports src/draw.js and nothing else', 'skip', 'verify.html is not written yet');
   }
 
   /*

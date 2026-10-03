@@ -1,0 +1,320 @@
+<!doctype html>
+<!--
+  verify.html: check a WebFPV Race Name Picker receipt in the browser.
+
+  It takes a pasted receipt, as the text form or as JSON, or the one the
+  results page links to, which arrives in the part of the address after the #
+  and so is never sent to a server. It recomputes the list digest, the
+  commitment and the finishing order with src/draw.js, and puts a tick or a
+  cross by each with one sentence about what that means.
+
+  This page imports src/draw.js and nothing else, so the code that decides
+  what the ticks say is one short file a sceptic can read. Nothing here is
+  uploaded: there is no request but the ones for this page's own files. The
+  receipt's names come from whoever wrote the receipt, so every word shown is
+  put on the page as text and never as markup.
+
+  This file is part of the WebFPV Race Name Picker.
+
+  The WebFPV Race Name Picker is free software: you can redistribute it
+  and/or modify it under the terms of the GNU General Public License as
+  published by the Free Software Foundation, either version 3 of the
+  License, or (at your option) any later version.
+
+  The WebFPV Race Name Picker is distributed in the hope that it will be
+  useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+  General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with the WebFPV Race Name Picker. If not, see
+  <https://www.gnu.org/licenses/>.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#141c16">
+<title>Verify a draw</title>
+<meta name="description" content="Check a WebFPV Race Name Picker receipt in your browser. Nothing is uploaded.">
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --cream: #f3ead4;
+    --sakura: #e8a8b8;
+    --amber: #ffd45c;
+    --mint: #7dffb4;
+    --slate: #9db3c8;
+    --dim: #8a9a86;
+    --deep: #141c16;
+    --bad: #ff8f8f;
+    --panel: rgba(16, 22, 17, 0.86);
+    --sunk: rgba(11, 16, 12, 0.55);
+    --line: rgba(244, 236, 214, 0.12);
+    --edge: rgba(232, 168, 184, 0.28);
+    --ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--deep);
+    color: var(--cream);
+    font-family: var(--ui);
+    font-variant-numeric: tabular-nums lining-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { background: radial-gradient(120% 90% at 50% 6%, #1e2a20, #101610 60%) fixed; min-height: 100vh; }
+  a { color: var(--sakura); }
+  a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--sakura);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+  .wrap { width: min(760px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 56px; }
+  .brand { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .brand a { text-decoration: none; font-weight: 800; font-size: 22px; letter-spacing: 0.06em; color: var(--cream); }
+  .brand a b { color: var(--sakura); }
+  .brand span { font-size: 11px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--slate); }
+  .eyebrow {
+    display: flex; align-items: center; gap: 12px; margin: 34px 0 0;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.28em; text-transform: uppercase; color: #d8d2c0;
+  }
+  .eyebrow::before { content: ""; width: 36px; height: 2px; background: var(--sakura); flex: 0 0 auto; }
+  h1 { margin: 10px 0 0; font-size: clamp(30px, 6vw, 44px); line-height: 1.05; font-weight: 800; }
+  .lede { margin: 14px 0 0; max-width: 36em; color: var(--slate); font-size: 15px; line-height: 1.6; }
+  .panel { background: var(--panel); border-radius: 4px; border-top: 2px solid var(--edge); box-shadow: inset 0 0 0 1px var(--line); padding: 18px; margin-top: 22px; }
+  label, .kicker { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--sakura); margin: 0 0 7px; }
+  textarea, input {
+    width: 100%; background: var(--sunk); color: var(--cream); border: 0; border-radius: 3px;
+    box-shadow: inset 0 0 0 1px var(--line); padding: 10px 12px; font: 13px/1.5 var(--mono);
+  }
+  textarea { min-height: 220px; resize: vertical; }
+  input { font-size: 14px; }
+  .row { margin-top: 14px; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  button {
+    appearance: none; cursor: pointer; border-radius: 3px; padding: 10px 18px; font: 700 13px var(--ui);
+    letter-spacing: 0.06em; border: 1px solid var(--edge); background: transparent; color: var(--cream);
+  }
+  button.primary { background: var(--mint); border-color: var(--mint); color: var(--deep); }
+  button:hover { border-color: var(--sakura); }
+  button.primary:hover { filter: brightness(1.08); }
+  #out { margin-top: 22px; }
+  .verdict { margin: 0; padding: 4px 0 16px; font-size: 20px; font-weight: 800; line-height: 1.25; }
+  .verdict.ok { color: var(--mint); }
+  .verdict.bad { color: var(--bad); }
+  .verdict small { display: block; margin-top: 6px; font-size: 13px; font-weight: 500; color: var(--slate); }
+  .check { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); }
+  .check:first-of-type { border-top: 0; }
+  .check .body { display: grid; gap: 4px; align-content: start; }
+  .mark { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 900; font-size: 16px; }
+  .mark.ok { background: var(--mint); color: var(--deep); }
+  .mark.bad { background: var(--bad); color: var(--deep); }
+  .mark.unsure { background: var(--amber); color: var(--deep); }
+  .check h2 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--cream); }
+  .check h2 span { margin-left: 8px; letter-spacing: 0.1em; color: var(--dim); }
+  .value { margin: 0; font: 12px/1.45 var(--mono); color: var(--amber); word-break: break-all; }
+  .value.stated { color: var(--bad); }
+  .says { margin: 0; font-size: 14px; line-height: 1.5; color: var(--slate); }
+  table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 14px; }
+  th { text-align: left; font-size: 10px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--sakura); padding: 6px 8px; }
+  td { padding: 7px 8px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+  td.num { font-family: var(--mono); color: var(--slate); width: 3.5em; }
+  tr.winner td { color: var(--mint); font-weight: 700; }
+  .note { margin: 12px 0 0; padding: 10px 12px; border-left: 2px solid var(--amber); color: var(--cream); font-size: 14px; line-height: 1.5; background: var(--sunk); }
+  .fine { margin: 16px 0 0; font-size: 13px; line-height: 1.6; color: var(--dim); }
+  footer { margin-top: 38px; font-size: 13px; line-height: 1.8; color: var(--dim); }
+  footer a { margin-right: 16px; white-space: nowrap; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+  @media (forced-colors: active) { .mark { border: 2px solid CanvasText; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="brand">
+    <a href="index.html" aria-label="WebFPV Race Name Picker, home">WEB<b>FPV</b></a>
+    <span>Race Name Picker</span>
+  </header>
+
+  <main>
+    <p class="eyebrow">Verify a draw</p>
+    <h1>Check a receipt</h1>
+    <p class="lede">Paste the receipt the picker gave you, as text or as JSON. This page works out the draw again from the names and the seed in it and tells you whether it matches. Nothing is uploaded: your browser does the arithmetic.</p>
+
+    <section class="panel">
+      <label for="receipt">The receipt</label>
+      <textarea id="receipt" spellcheck="false" autocomplete="off" placeholder="WebFPV Race Name Picker receipt&#10;algorithm: webfpv-picker/v1&#10;..."></textarea>
+      <div class="row">
+        <label for="fp">The fingerprint you saw before the start (optional)</label>
+        <input id="fp" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="1B39 BA47 3BA5" maxlength="40">
+      </div>
+      <div class="actions">
+        <button type="button" id="check" class="primary">Check this receipt</button>
+        <button type="button" id="clear">Clear</button>
+      </div>
+    </section>
+
+    <section id="out" aria-live="polite" tabindex="-1"></section>
+
+    <p class="fine">The commitment covers the names and the seed, and so the finishing order. The title, the time and the number of winners are labels on a draw and are not covered. <a href="https://github.com/Mathew-Harvey/QuadRaceRandomNamePicker/blob/main/RANDOMNESS.md" rel="noopener noreferrer">RANDOMNESS.md</a> says what that does and does not prove.</p>
+  </main>
+
+  <footer>
+    <a href="index.html">The picker</a>
+    <a href="https://github.com/Mathew-Harvey/QuadRaceRandomNamePicker/blob/main/RANDOMNESS.md" rel="noopener noreferrer">How the draw works</a>
+    <a href="https://github.com/Mathew-Harvey/QuadRaceRandomNamePicker/blob/main/src/draw.js" rel="noopener noreferrer">src/draw.js</a>
+    <a href="https://github.com/Mathew-Harvey/QuadRaceRandomNamePicker/blob/main/tools/verify.mjs" rel="noopener noreferrer">tools/verify.mjs</a>
+    <a href="https://github.com/Mathew-Harvey/QuadRaceRandomNamePicker/blob/main/tools/verify.py" rel="noopener noreferrer">tools/verify.py</a>
+    <div>Names and logos never leave this browser.</div>
+  </footer>
+</div>
+
+<script type="module">
+import {
+  available, checkReceipt, fingerprint, matchesFingerprint, parseReceipt, receiptFromFragment,
+} from './src/draw.js';
+
+const $ = (id) => document.getElementById(id);
+const out = $('out');
+
+/* Everything that comes from a receipt goes on the page as text. */
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) {
+    node.className = className;
+  }
+  if (text !== undefined) {
+    node.textContent = text;
+  }
+  return node;
+}
+
+function problem(message) {
+  const box = el('div', 'panel');
+  const head = el('p', 'verdict bad', 'This is not a receipt this page can read.');
+  head.append(el('small', '', message));
+  box.append(head);
+  return box;
+}
+
+function show(receipt, checked) {
+  const box = el('div', 'panel');
+  /* A fingerprint typed in is part of the question: "is this the draw I saw sealed?" A receipt that is
+   * consistent with itself but is not that draw is exactly what a rerun looks like, so it fails. */
+  const typed = $('fp').value.trim();
+  const seen = typed && checked.derived ? matchesFingerprint(checked.derived.commitment, typed) : null;
+  const fine = checked.ok && seen !== false;
+  const head = el('h2', `verdict ${fine ? 'ok' : 'bad'}`, fine ? 'This draw checks out.' : 'This draw does not check out.');
+  head.id = 'verdict';
+  head.tabIndex = -1;
+  head.append(el('small', '', fine
+    ? 'Everything below was recomputed here from the names and the seed in the receipt.'
+    : checked.ok
+      ? 'The receipt is consistent with itself, but it is not the draw whose fingerprint you saw before the start. Ask for the receipt of that one.'
+      : 'At least one thing below does not match what the receipt says. Do not rely on this draw.'));
+  box.append(head);
+
+  for (const c of checked.checks) {
+    const row = el('div', 'check');
+    const mark = el('div', `mark ${c.ok ? 'ok' : 'bad'}`, c.ok ? '✓' : '✗');
+    mark.setAttribute('role', 'img');
+    mark.setAttribute('aria-label', c.ok ? 'Passed' : 'Failed');
+    const body = el('div', 'body');
+    const h = el('h2', '', c.label);
+    h.append(el('span', '', c.ok ? 'matches' : 'DOES NOT MATCH'));
+    body.append(h, el('p', 'value', c.value));
+    if (!c.ok && c.stated !== undefined) {
+      body.append(el('p', 'value stated', `The receipt says: ${c.stated}`));
+    }
+    body.append(el('p', 'says', c.says));
+    row.append(mark, body);
+    box.append(row);
+  }
+
+  if (typed && checked.derived) {
+    const match = seen;
+    const row = el('div', 'check');
+    const fpMark = el('div', `mark ${match ? 'ok' : match === null ? 'unsure' : 'bad'}`, match ? '✓' : match === null ? '?' : '✗');
+    fpMark.setAttribute('role', 'img');
+    fpMark.setAttribute('aria-label', match ? 'Passed' : match === null ? 'Not enough digits to say' : 'Failed');
+    const fpBody = el('div', 'body');
+    const h = el('h2', '', 'The fingerprint you saw');
+    h.append(el('span', '', match === null ? 'needs 8 digits' : match ? 'matches' : 'DOES NOT MATCH'));
+    fpBody.append(h, el('p', 'value', fingerprint(checked.derived.commitment)));
+    fpBody.append(el('p', 'says', match === null
+      ? 'Type at least 8 of the 12 digits that were on screen before the start, and this page will compare them with the commitment.'
+      : match
+        ? 'What you saw on screen before the start is the start of this commitment, so this is the draw that was sealed then.'
+        : 'What you typed is not the start of this commitment. Either it was mistyped, or this is not the draw that was sealed before the start.'));
+    row.append(fpMark, fpBody);
+    box.append(row);
+  }
+
+  if (checked.derived) {
+    const names = receipt.names;
+    const table = el('table');
+    const head2 = el('tr');
+    for (const text of ['Place', 'Entry', 'Name']) {
+      head2.append(el('th', '', text));
+    }
+    table.append(head2);
+    checked.derived.order.forEach((entry, place) => {
+      const tr = el('tr', place < receipt.winners ? 'winner' : '');
+      tr.append(el('td', 'num', String(place + 1)), el('td', 'num', String(entry + 1)), el('td', '', names[entry]));
+      table.append(tr);
+    });
+    const wrap = el('div', 'row');
+    wrap.append(el('p', 'kicker', !checked.ok
+      ? 'What this seed and this list actually produce'
+      : receipt.winners === 1 ? 'The winner and the rest' : `The ${receipt.winners} winners and the rest`), table);
+    box.append(wrap);
+  }
+  for (const w of checked.warnings) {
+    box.append(el('p', 'note', w));
+  }
+  out.replaceChildren(box);
+  head.focus({ preventScroll: false });
+}
+
+async function run() {
+  out.replaceChildren();
+  if (!available()) {
+    out.append(problem('This browser cannot hash here: it needs a secure connection, https or localhost.'));
+    return;
+  }
+  try {
+    const receipt = parseReceipt($('receipt').value);
+    show(receipt, await checkReceipt(receipt));
+  } catch (e) {
+    out.append(problem(e.message));
+  }
+}
+
+function fromAddress() {
+  let text = null;
+  try {
+    text = receiptFromFragment(location.hash);
+  } catch (e) {
+    out.replaceChildren(problem(e.message));
+    return;
+  }
+  if (text !== null) {
+    $('receipt').value = text;
+    run();
+  }
+}
+
+$('check').addEventListener('click', run);
+$('clear').addEventListener('click', () => {
+  $('receipt').value = '';
+  $('fp').value = '';
+  out.replaceChildren();
+  $('receipt').focus();
+});
+window.addEventListener('hashchange', fromAddress);
+fromAddress();
+</script>
+</body>
+</html>
