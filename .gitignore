@@ -1,0 +1,8 @@
+node_modules/
+*.log
+.DS_Store
+# Screenshots. scripts/shots.js leaves its pictures in .shots/ and they are
+# never committed: the family's rule, learned when 175 of them reached 77 MB
+# of the simulator's repository. A picture is evidence for one round, and a
+# number in a file is evidence forever.
+.shots/

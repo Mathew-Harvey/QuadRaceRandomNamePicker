@@ -1,0 +1,18 @@
+{
+  "name": "webfpv-race-name-picker",
+  "version": "0.1.0",
+  "description": "The WebFPV Race Name Picker. Names in, a race of five inch quads, a winner out, and a draw anybody can check. Client side only, three.js, no build step.",
+  "license": "GPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "serve": "node scripts/serve.js",
+    "test": "node --test \"tests/*.test.js\"",
+    "lint": "node scripts/lint.js",
+    "vendor": "node scripts/vendor.js ../WebFPVSimulator",
+    "shots": "node scripts/shots.js"
+  }
+}
