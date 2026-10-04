@@ -61,20 +61,20 @@
 import { GRID, cosPi, sinPi } from './course.js';
 
 /*
- * The rail's lens: tight enough that the leading quads are about 80 pixels
- * across at 1080 lines (the brief asked for 40, and at 48 a person watching
- * found them hard to follow), wider at the start, where the grid and the pack
- * are both in the picture. The quads are drawn 2.2 times life size, which
- * src/layout.js says is as far as they can go, so the rest of the size is the
- * lens: 26 degrees, with the camera aiming 3 m ahead of the pack and not 4.5,
- * so the leader sits nearer the middle of a narrower frame. The leader is in
- * frame with 4.8 degrees to spare on a wide window and 4.5 on a phone held
- * upright, at the least, which is in a photo finish, where the zoom holds the
- * first two at 80 per cent of the way to the edge. A lens narrower than this
- * is held back by MIN_HORIZONTAL, which is 25.6 degrees high on a 16 by 9
- * window.
+ * The rail's lens: 34 degrees high, wider at the start, where the grid and the
+ * pack are both in the picture, with the camera aiming 4.5 m ahead of the pack
+ * once the launch is over. It is the frame the rail was built with, and the
+ * owner has said to keep it (2026-10-04: "just make the quads larger during
+ * the race, don't zoom in to make the frame narrower"). It had been brought in
+ * to 26 degrees, aiming 3 m ahead, to make the quads bigger on the glass, and
+ * that is the zoom the owner did not want. The size is src/layout.js's
+ * FLEET_SCALE now, which is 4.5, and the lens only has to show the race: the
+ * leading quads are about 127 pixels across at 1080 lines (the brief asked for
+ * 40, and at 48 a person watching found them hard to follow). MIN_HORIZONTAL
+ * is what keeps a window that is not 16 by 9 from being shown less than the
+ * frame, which is the owner's own window as much as a phone's.
  */
-export const RAIL_FOV = 26;
+export const RAIL_FOV = 34;
 export const OPEN_FOV = 46;
 export const AERIAL_FOV = 54;
 
@@ -136,29 +136,31 @@ export const PHOTO_FIT = 0.8;
 /* How close first and second are, in seconds, for the finish to be a photo finish: the lens fits both, and the beat and the longer slow part (src/show.js) are for it. */
 export const PHOTO_CLOSE = 0.25;
 /*
- * The window's minimum horizontal field in two other places. The finish frame
- * goes back to the 50 degrees a phone held upright had before the race lens
- * was brought in, because the winner's flip needs the room, and the calm rail
- * never left it. The race rail works its own minimum out, for the window it is
- * asked about, and hands back the lens that results (see rail), because a zoom
- * on a narrow window is a zoom from the lens that window is given, and not
- * from the 26 degrees that would be 15 across on a phone.
+ * The window's minimum horizontal field in two other places, which are the
+ * same 50 degrees the race lens has again: the finish frame needs the room for
+ * the winner's flip, and the calm rail has always had it. The race rail works
+ * its own minimum out, for the window it is asked about, and hands back the
+ * lens that results (see rail), because a zoom on a narrow window is a zoom
+ * from the lens that window is given, and not from the 34 degrees that would
+ * be 19 across on a phone.
  */
 export const FINISH_MIN_HORIZONTAL = 50;
 export const CALM_MIN_HORIZONTAL = 50;
-/* Half the span of a quad at the scale src/layout.js draws it, in metres (0.347 m across its props, times 3.0, halved, and a hair over). */
-export const QUAD_HALF = 0.55;
+/* Half the span of a quad at the scale src/layout.js draws it, in metres (0.347 m across its props, times 4.5, halved, and a hair over). */
+export const QUAD_HALF = 0.8;
 /* Seconds before the winner crosses and after the second does that the fit is worked out in: outside them the pair are too far from the line to matter. */
 const FIT_BEFORE = 1.5;
 const FIT_AFTER = 1.5;
 
 /*
- * The winner's picture: 2.4 m off and a little below, looking up, 30 degrees
- * of vertical field, so the quad is most of the panel's height and is against
- * the trees and the sky and not the grass. On the rail's own lens it would be
- * forty pixels in a panel five hundred high, and the page is lettered round a
- * picture of it, so it is brought in. The eye is never lower than HERO_FLOOR
- * above the ground, whatever level the quad is flying at.
+ * The winner's picture: 3.6 m off and a little below, looking up, 30 degrees of
+ * vertical field, so the quad, which is 1.56 m across its props, is most of the
+ * panel's height and is against the trees and the sky and not the grass. The
+ * distance goes with the fleet's scale (it was 2.4 m for a quad of 3.0). On the
+ * rail's own lens it would be forty pixels in a panel five hundred high, and
+ * the page is lettered round a picture of it, so it is brought in. The eye is
+ * never lower than HERO_FLOOR above the ground, whatever level the quad is
+ * flying at.
  *
  * It is also the live cutaway (winnerCut in src/show.js): the same camera,
  * following the winner through the flip, for a person who has not asked for
@@ -168,8 +170,8 @@ const FIT_AFTER = 1.5;
  * its own field out and does not use it.
  */
 export const HERO_FOV = 30;
-export const HERO_DISTANCE = 2.4;
-export const HERO_RISE = -0.25;
+export const HERO_DISTANCE = 3.6;
+export const HERO_RISE = -0.38;
 export const HERO_FLOOR = 0.6;
 export const HERO_MIN_HORIZONTAL = 30;
 
@@ -192,13 +194,15 @@ const isPhoto = (plan) => plan.count > 1 && plan.finish[plan.order[1]] - plan.fi
 /*
  * The narrowest horizontal field a window gets, in degrees, unless a shot
  * says otherwise (the zoom and the finish frame do). The race lens is
- * 26 degrees high, which is 44.7 across on a 16 by 9 window, so a window as
- * wide as that is not touched; it is for a narrow one, a phone held upright,
- * where the lens chosen for a wide frame would show seven metres of track.
- * It was 50, and 44 is what the race lens needs to stay as it is on a 16 by 9
- * window; a phone upright keeps the leader in frame with 4.5 degrees to spare.
+ * 34 degrees high, which is 57 across on a 16 by 9 window, so a window as
+ * wide as that is not touched; it is for a narrower one, a window that is
+ * nearly square or a phone held upright, where the lens chosen for a wide
+ * frame would show a few metres of track. It was 44 for a while, to keep a
+ * narrower lens from being widened on a 16 by 9 window, and a window that was
+ * not 16 by 9 was shown less of the track than the original frame: the frame
+ * is back at 50.
  */
-export const MIN_HORIZONTAL = 44;
+export const MIN_HORIZONTAL = 50;
 
 /*
  * A vertical field of view that keeps the horizontal one from going below
@@ -319,12 +323,11 @@ export function makeShots({ course }) {
    * Where the rail aims relative to the group, in metres ahead of it: behind
    * it at the start, so the grid fills the left of the frame and the
    * gantry's near upright, which stands at the line, is well to the right of
-   * the middle and not a pole through it, and 3 m ahead of it once the launch
-   * is over: room for the pack to cross, and the leader near enough the middle
-   * of a narrow lens that a bend the camera lags in does not lose it.
+   * the middle and not a pole through it, and 4.5 m ahead of it once the
+   * launch is over, which is room for the pack to cross.
    */
   const AHEAD_START = -4;
-  const AHEAD_RACE = 3;
+  const AHEAD_RACE = 4.5;
   const MAX_YAW = (44 * Math.PI) / 180;
   const MAX_SPEED = 80;
   const CATCH_UP = 1.5;

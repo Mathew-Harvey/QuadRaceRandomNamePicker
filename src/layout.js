@@ -68,27 +68,36 @@ export const FIELD = Object.freeze({ width: 200, depth: 100 });
 /*
  * How much larger than life the fleet is drawn. A five inch quad is 0.35 m
  * across its props, a dot from the 20 m the rail camera stands from the line,
- * and the brief wants the leaders to read as quads. The planner keeps every
- * pair at least 0.88 m apart (measured over 36 plans, the least closest
- * approach in any of them was 0.879 m, the median 0.900), and a quad's span is
- * 0.347 m times this.
+ * and the brief wants the leaders to read as quads. There are two ways to
+ * make a quad bigger on the glass: draw it larger, or narrow the lens until
+ * less of the track is in the picture. The owner has chosen the first and
+ * ruled out the second (2026-10-04: "just make the quads larger during the
+ * race, don't zoom in to make the frame narrower"), so the race lens is the
+ * original one (src/camera.js) and all of the size is here.
  *
- * 2.2 was the most a quad could be without its props ever meeting a
- * neighbour's: 0.76 m across, 0.12 m to spare. It is 3.0 on purpose, on the
- * owner's word of 2026-10-04 that larger still was wanted and a bit comical
- * was fine: a quad is 1.04 m across, which clears the 1.3 m between two lanes
- * and the 2.4 m between two rows of the grid, and in the closest passes the
- * props of two quads overlap by about 0.16 m. They are translucent discs, so
- * it reads as a bump and not as a fault. At 3.4 two quads in neighbouring
- * lanes would touch, and that is where it stops being a bit comical.
+ * It is 4.5, which is as far as it goes. At this scale a quad is 1.56 m across
+ * its props and its arms reach 0.50 m from its centre. The planner keeps every
+ * pair at least 0.85 m apart (the least in the 3,000 plans of
+ * tests/choreo.test.js; its own limit is 0.5 m), so the props of two quads in
+ * a close pass overlap by more than half a metre. They are translucent discs,
+ * and that reads as a bump and not as a fault, which is the bit comical the
+ * owner said was fine. What stops it here is the frames. Flown over 425 plans
+ * of 5 to 50 quads at 120 Hz with the attitudes the fleet gives them, the
+ * nearest two arms (0.016 m wide boxes, times this) had 0.25 m of air between
+ * their edges at 3.0, 0.035 m at 4.0, and at 4.5 touched: 8 samples of 120 Hz
+ * had an arm 0.014 m into another, and one had an arm 0.016 m into another
+ * quad's body, which no one could see. At 5.0 it is 0.064 m, a whole arm
+ * through another in 38 samples, and that is where a bit comical becomes a
+ * fault.
  *
  * The start blocks do not grow with it. A block is as tall as the plan says a
  * quad sits on its foam (LATTICE.blockHeight, 0.32 m), and that is what a
- * block is at BLOCK_SCALE 2.2, the old scale of the fleet; tests/layout.test.js
- * holds the two together. So a quad of 3.0 sits on a block built for 2.2, and
- * its props hang over the sides of it, which is part of the joke.
+ * block is at BLOCK_SCALE 2.2, the scale the fleet was drawn at when the
+ * blocks were made; tests/layout.test.js holds the two together. A quad of 4.5
+ * is 1.56 m across its props and a block is 1.32 m, so the props hang over
+ * the sides of it, which is part of the joke.
  */
-export const FLEET_SCALE = 3.0;
+export const FLEET_SCALE = 4.5;
 export const BLOCK_SCALE = 2.2;
 export const PAD_SIZE = 0.6 * BLOCK_SCALE;
 

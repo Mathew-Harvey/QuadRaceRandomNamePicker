@@ -107,8 +107,8 @@ const REDUCED = () => reducedQuery.matches;
 /* How long the seal stays on the glass before it folds into the corner, in seconds. */
 const SEAL_HOLD = 1.9;
 const SEAL_HOLD_STILL = 1.4;
-/* A tag stands this high over its quad, in metres of the plan's frame: clear of a quad drawn three times life size. */
-const TAG_LIFT = 0.7;
+/* A tag stands this high over its quad, in metres of the plan's frame: clear of a quad drawn four and a half times life size. */
+const TAG_LIFT = 1;
 /* The lamps when nothing is being shown. */
 const LAMPS_OFF = [0, false];
 
@@ -810,7 +810,7 @@ async function startShow({ receipt, replay, kept = true }) {
  * One frame of the timing tower, the clock, the lap, the beats and the tags,
  * from the plan at race time t. `tags` is false under the winner's chase
  * camera: the quad is most of the frame's height there, the beat names it,
- * and a tag stood 0.7 m over it would be at the very top edge of the picture,
+ * and a tag stood a metre over it would be at the very top edge of the picture,
  * or over a runner up who is only in the corner of it.
  */
 function overlay(t, tags = true) {

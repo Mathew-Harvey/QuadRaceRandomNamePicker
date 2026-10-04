@@ -89,11 +89,11 @@ test('the rail turns no faster than 50 degrees a second, over every plan, 120 ti
   assert.ok(worst <= 50, `the rail turns ${worst} degrees a second`);
 });
 
-test('the leader is in frame from the end of the launch to the line, at 16 by 9 and held upright on a phone', () => {
+test('the leader is in frame from the end of the launch to the line, at 16 by 9, in a square window and held upright on a phone', () => {
   const view = {};
   const pose = {};
   const rank = [];
-  for (const aspect of [16 / 9, 9 / 16]) {
+  for (const aspect of [16 / 9, 1, 9 / 16]) {
     let frames = 0;
     let out = 0;
     for (const { plan } of PLANS) {
@@ -119,7 +119,7 @@ test('the leader is in frame from the end of the launch to the line, at 16 by 9 
   }
 });
 
-test('the leading quads are about 110 pixels across at 1920 by 1080: measured', () => {
+test('the leading quads are about 125 pixels across at 1920 by 1080: measured', () => {
   const view = {};
   const pose = {};
   const rank = [];
@@ -145,17 +145,19 @@ test('the leading quads are about 110 pixels across at 1920 by 1080: measured', 
   console.log(`camera: the top three are ${at(0.05).toFixed(1)} px at the 5th percentile, ${at(0.5).toFixed(1)} median, ${widths[0].toFixed(1)} least, at 1920 by 1080`);
   /*
    * The brief asked for 40 for the leading group, and at 48 a person could
-   * not follow them. The quads are drawn three times life size, which is
-   * more than the planner's spacing strictly allows and which the owner asked
-   * for on purpose (src/layout.js), and the lens is 26 degrees, and these are
-   * what that measures: 113 at the median, 88 at the fifth percentile, and 63
-   * for the least, a quad in the outer lane of a bend. They were 83, 65 and
-   * 46 at 2.2 times life size, and 48, 37 and 30 before the lens was
-   * narrowed. They are held from getting worse.
+   * not follow them. The quads are drawn four and a half times life size,
+   * which is as far as their frames let them go and which the owner asked for
+   * on purpose (src/layout.js), in the lens the rail was built with, 34
+   * degrees, and these are what that measures: 127 at the median, 99 at the
+   * fifth percentile, and 78 for the least, a quad in the outer lane of a
+   * bend. At 3.0 times life size in a 26 degree lens, which is the frame the
+   * owner did not want, they were 113, 88 and 63, and 83, 65 and 46 at 2.2,
+   * and 48, 37 and 30 at 1.7 in the lens they are in now. They are held from
+   * getting worse.
    */
-  assert.ok(at(0.5) >= 100, `the median is ${at(0.5)}`);
-  assert.ok(at(0.05) >= 80, `the 5th percentile is ${at(0.05)}`);
-  assert.ok(widths[0] >= 56, `the least is ${widths[0]}`);
+  assert.ok(at(0.5) >= 115, `the median is ${at(0.5)}`);
+  assert.ok(at(0.05) >= 89, `the 5th percentile is ${at(0.05)}`);
+  assert.ok(widths[0] >= 70, `the least is ${widths[0]}`);
 });
 
 test('the camera never crosses the line, and stops short of it square to the finish', () => {
@@ -282,14 +284,40 @@ test('the paddock orbit stays a fixed distance from the middle of the grid, abov
 });
 
 test('a phone held upright gets a lens wide enough to show the pack, and a wide window is not touched', () => {
-  /* The race lens is 44.7 degrees across on a 16 by 9 window, which is over the minimum, so the minimum does not widen it. */
+  /* The race lens is 57 degrees across on a 16 by 9 window, which is over the minimum, so the minimum does not widen it. */
   assert.equal(fovFor(RAIL_FOV, 16 / 9), RAIL_FOV);
   const across = (vertical, aspect) => (2 * Math.atan(Math.tan((vertical * Math.PI) / 360) * aspect) * 180) / Math.PI;
   const portrait = fovFor(RAIL_FOV, 9 / 16);
   assert.ok(across(portrait, 9 / 16) >= MIN_HORIZONTAL - 0.1, `the horizontal field is ${across(portrait, 9 / 16)} degrees`);
-  /* The calm rail and the finish frame keep the 50 degrees a phone had before the race lens was brought in. */
+  /* The calm rail and the finish frame have their own minimum, 50 degrees, which is the race lens's again. */
   assert.ok(across(fovFor(CALM_FOV, 9 / 16, CALM_MIN_HORIZONTAL), 9 / 16) >= CALM_MIN_HORIZONTAL - 0.1);
   assert.ok(across(fovFor(FINISH_FOV, 9 / 16, FINISH_MIN_HORIZONTAL), 9 / 16) >= FINISH_MIN_HORIZONTAL - 0.1);
+});
+
+test('the race frame is not narrowed to make the quads look bigger: 34 degrees high on a wide window, 50 across on a narrow one, and the size is the quads\'', () => {
+  /*
+   * The owner's word of 2026-10-04: "just make the quads larger during the
+   * race, don't zoom in to make the frame narrower". The rail's lens had been
+   * brought in from 34 degrees to 26, and its minimum field across from 50
+   * degrees to 44, to make the quads look bigger, and the owner did not want
+   * a narrower frame. This measures what the rail really gives a window in
+   * mid race, after the opening and well before the finish, for the shapes a
+   * window is: the frame of the original lens, which a change that brings it
+   * in again, by whichever constant, has to argue with. The size on the glass
+   * is held by the test above, from FLEET_SCALE, which is where it belongs.
+   */
+  const { plan } = PLANS[4];
+  const view = {};
+  const across = (vertical, aspect) => (2 * Math.atan(Math.tan((vertical * Math.PI) / 360) * aspect) * 180) / Math.PI;
+  for (const aspect of [16 / 9, 16 / 10, 4 / 3, 1, 3 / 4, 9 / 16]) {
+    shots.rail(plan, 10, view, false, aspect);
+    const vertical = fovFor(view.fov, aspect, view.minH);
+    assert.ok(across(vertical, aspect) >= 50 - 0.1, `the rail shows ${across(vertical, aspect).toFixed(1)} degrees across at aspect ${aspect.toFixed(2)}`);
+    if (aspect >= 16 / 10) {
+      assert.ok(vertical >= 34 - 0.01, `the rail is ${vertical.toFixed(1)} degrees high at aspect ${aspect.toFixed(2)}`);
+    }
+  }
+  assert.ok(RAIL_FOV >= 34 && MIN_HORIZONTAL >= 50, `the lens is ${RAIL_FOV} degrees and the minimum across is ${MIN_HORIZONTAL}`);
 });
 
 test('the winner\'s picture is aimed at the winner, from the infield, a fixed way off, with the quad the right way up', () => {
@@ -305,7 +333,7 @@ test('the winner\'s picture is aimed at the winner, from the infield, a fixed wa
     assert.ok(Math.abs(view.z - Math.max(HERO_FLOOR, pose.z + HERO_RISE)) < 1e-9, 'a little below, and never under the floor');
     assert.ok(view.z >= HERO_FLOOR, 'above the ground');
     assert.equal(view.fov, HERO_FOV);
-    assert.equal(view.minH, HERO_MIN_HORIZONTAL, 'a window narrower than 16 by 9 is not given the rail\'s 44 degrees across, which would put a tall strip of sky round the quad');
+    assert.equal(view.minH, HERO_MIN_HORIZONTAL, 'a window narrower than 16 by 9 is not given the rail\'s 50 degrees across, which would put a tall strip of sky round the quad');
     assert.ok(Math.hypot(view.x, view.y) < Math.hypot(pose.x, pose.y), 'on the infield side, nearer the middle of the oval than the winner is');
     /* The flip has hardly begun: the quad is the right way up, which a picture of the winner should have, and not half way round. */
     assert.ok(pose.flip >= 0 && pose.flip < 0.1, `the flip is ${pose.flip} radians in`);

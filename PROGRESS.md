@@ -570,3 +570,75 @@ Not measured: a real GPU, a real phone, any browser but Chromium, how the slow m
 ### Open questions for the owner
 
 Whether 5.4 s of slow finish is too long (it is three constants), whether the quads want to touch at 3.4 or stay where their props only overlap, and whether the chase camera should be a little further off the winner so that the flip has more room.
+
+
+## 2026-10-04 | milestone 5, follow up | The frame back, the quads bigger
+
+The owner's words: "just make the quads larger during the race, don't zoom in to make the frame narrower". Nothing here changes the draw or the plan: the same receipt flies the same race. No decision in this entry needed the owner beforehand (no algorithm, no dependency, no partner or sponsor, no other repository), but one reading in it is a guess and is said first, because it is the part the owner may want the other way.
+
+### How I read it
+
+The race frame is not to be narrowed to buy size on the glass: the size is the quads' own. The first entry of this follow up (bigger drones) had done the opposite on purpose, brought the rail's lens in from 34 degrees to 26 with the camera aiming 3 m and not 4.5 m ahead of the pack and the narrowest window 44 degrees across and not 50, and the comments in `src/camera.js` said "the rest of the size is the lens". That is the zoom the owner did not want, so all three are back as they were and the size is `FLEET_SCALE`.
+
+What I left alone is the finish: the slow motion, the zoom on the winner at the line (down to 14 degrees) and the cut to the winner's chase camera, all of which the owner asked for by name in the message before. The new message says "during the race", and I took it to mean the race frame and not the finish. It can be read the other way, as no zooming anywhere, and the first question below is that one.
+
+### What changed
+
+- **The race lens is the original again**: `RAIL_FOV` 34 (was 26), the aim 4.5 m ahead of the pack (was 3), `MIN_HORIZONTAL` 50 (was 44). On a 16 by 9 window that is 57 degrees across and not 45, a third more track at the pack's distance; in a near square window it is 50 across and not 44, 15 per cent more. The owner's own window, per the front door's CLAUDE.md, is 1877 by 1938, so the minimum matters more than the lens there.
+- **The quads are drawn 4.5 times life size, up from 3.0.** On the glass at 1920 by 1080 the top three are 127 px across at the median (5th percentile 99, least 78) where they were 113, 88 and 63 in the narrow frame: 13 per cent bigger in a frame a third wider, and about 30 per cent bigger in the near square window. The tests' px are the prop span (0.347 m times the scale): the dark frame the eye follows is about 55 per cent of that, 70 px at 1080 lines, and the rest is the translucent discs.
+- **What goes with the quad's size**: `QUAD_HALF`, which the finish zoom fits, is 0.8 m; the winner's picture and the chase camera are 3.6 m from the winner and 0.38 m below (`HERO_DISTANCE`, `HERO_RISE`), so the quad is the same share of the frame it was; tags stand 1 m over a quad (`TAG_LIFT`).
+- **Why 4.5 and not more**, measured and not reasoned: 425 plans of 5 to 50 quads flown at 120 Hz with the attitudes the fleet gives them, the nearest two arms (boxes 0.016 m wide, times the scale) in any of them:
+
+        scale   arm centre lines   air between arm edges   an arm and the other quad's body
+        3.0     0.296 m            0.248 m                 0.258 m of air
+        4.0     0.099 m            0.035 m                 0.072 m of air
+        4.5     0.058 m            touching, 0.014 m in    touching, 0.016 m in
+        5.0     0.016 m            a whole arm through     not measured
+
+  At 4.5 eight samples of 120 Hz, in 425 plans, have an arm 1.4 cm into another, which no one can see. The nearest case at 4.0 is plan 687 in the launch, at 4.9 s, and at 4.5 plan 841 at 7.4 s. At 5.0 it is a fault, in 38 samples. The planner's spacing is not touched.
+- **Tests.** `tests/camera.test.js` has 18 tests (17): a new one holds the frame the rail gives six window shapes in mid race (34 degrees high on a wide one, 50 across on a narrow one) so that a narrowing by any constant has to argue with it; the leader-in-frame test adds a square window; the size floors went from 100, 80 and 56 px to 115, 89 and 70. `CLAUDE.md` has the fleet and the frame as one decision with the owner's words, and the README says three metres for the chase camera.
+
+### Measured
+
+    npm test        143 of 143 pass (142 before: the frame test)
+    npm run lint    16 of 16 clean
+    node scripts/csp.js --check   both pages current
+    node scripts/shots.js   138 of 138 checks, ten scenarios (the same as the last entry), about nine minutes of wall clock
+
+    the top three's width at 1920 by 1080, nine plans: 98.8 px 5th percentile, 127.3 median, 78.4 least (88.1, 113.0 and 62.9 at 3.0 in the 26 degree lens)
+    the leader in frame in 0 of 17,786 frames at 16 by 9, in a square window and held upright on a phone
+    the lens through a finish, unchanged in kind: a clear win 14.1 degrees at the line, a finish 0.046 s apart 17.3; the largest step in 1/120 s
+        0.74 degrees wide and 2.32 on a phone for a photo finish (the limit is 2.5), 0.45 and 1.52 for a clear win; no pump over 0.01
+    on the page, replaying the photo finish draw at 1280 by 720: the first two tags 232 px apart at the line (240 before; the line is at 190),
+        4.02 s of the page's own from the line to the results (the design is 4.00), the cut 3 frames after the line of 43, held for 40
+
+    five mutations of the final tree, each file put back and compared byte for byte: the lens back to 26 fails the phone lens test and the
+        frame test; the minimum back to 44 fails the leader in frame (in a square window), the frame test and the smoothness test; the fleet
+        back to 3.0 fails the size test and the chase camera's size on a phone, and at 4.0 the size test alone, which is the floors doing their
+        job; the aim back to 3 m ahead survives, because nothing guards how far ahead the camera aims, and that is said here.
+
+Not measured: a real GPU, a real phone, any browser but Chromium, and whether 70 px of dark frame at 1080 lines is big enough for the owner.
+
+### What went wrong, in the order it was found
+
+- **I had spent the frame to buy the size.** The lens, the aim and the minimum across were all free variables to me, and the last two entries said so. The owner treats the frame as the thing to protect, which is the more natural way round, and a window that is not 16 by 9 was paying for it with 6 degrees of width.
+- **The ceiling in my last entry was wrong by a third.** I wrote that at 3.4 two quads in neighbouring lanes would touch and stopped at 3.0. That was reasoned from the lane spacing and not measured, and the measurement says frames first meet at about 4.4.
+- **A small sample would have given a different ceiling.** 43 plans had the nearest arms 0.33 m apart at 4.0 and 0.26 m at 4.4; 223 plans found 0.099 m at 4.0, in plan 687, and 425 found nothing nearer. A worst case bound from the arm length (arms pointing at each other at the planner's 0.85 m) said 3.9. The truth sits between them and only the large flight showed where.
+- **A comment I wrote said an arm passes through another at 4.5.** The numbers say it touches, by 1.4 cm, and that it passes through at 5.0. Corrected before the commit.
+- **The size in pixels is the prop span, and I had not said so to the owner.** The tests, the brief's 40 px and every number in this file count the faint discs. Seen in a 1877 by 1938 picture, the leader's dark frame is 70 px in a window nearly 1900 across, which is small, and 4.5 is as big as the quads can get before their frames meet.
+
+### Decisions to know about
+
+- **The finish is as the last entry left it.** A person who wanted no zoom anywhere would still see the lens go to 14 degrees at the line and the picture cut to a camera 3.6 m from the winner.
+- **4.5 is a ceiling set by the frames.** More size on the glass than this is a narrower frame (each degree of `RAIL_FOV` is about 3 per cent of the size) or frames passing through each other, which is `FLEET_SCALE`, and each of those is the owner's to ask for.
+- **In a tall or square window the lower half of the frame is bare grass**, because the lens that gives it 50 degrees across is 51 high and the pack is in the middle of it. Showing less of the foreground is a narrower frame too.
+
+### What I saw and did not fix
+
+- **The timing tower covers the left sixth of the frame** at the launch, where the chasers are, and the beat's lettering can still stand over a tag on the rail.
+- **On a phone with sound on, the Sound and Present buttons stand over the race clock.**
+- **Nobody has watched the race at a real frame rate** in this frame, with these quads, or the finish.
+
+### Open questions for the owner
+
+Should the finish keep its zoom, or does "don't zoom in" mean none at all? Is a leader 70 px of dark frame at 1080 lines big enough, or would the owner give back some of the frame for size, and how many degrees? And would the owner rather have quads through each other at 5.0 than stop at 4.5?
