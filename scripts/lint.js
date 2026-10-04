@@ -72,9 +72,13 @@ export const WEB_CRYPTO = new RegExp(
 /*
  * Every absolute URL the picker's own code may carry: the one CDN request
  * the page makes, links out to documentation and to the family, the licence,
- * and the SVG namespaces, which are identifiers and not requests.
+ * and the SVG namespaces, which are identifiers and not requests. The
+ * picker's own address is here for the link preview's tags (og:url,
+ * og:image), which a chat site's crawler reads without a page to resolve a
+ * relative path against; the page itself never requests it.
  */
 export const ABSOLUTE_OK = [
+  'https://randomdraw.webfpv.org/',
   'https://cdn.jsdelivr.net/npm/three@0.160.0/',
   'https://www.gnu.org/licenses/',
   'https://github.com/Mathew-Harvey/',
