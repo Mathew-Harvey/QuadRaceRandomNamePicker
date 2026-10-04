@@ -642,3 +642,25 @@ Not measured: a real GPU, a real phone, any browser but Chromium, and whether 70
 ### Open questions for the owner
 
 Should the finish keep its zoom, or does "don't zoom in" mean none at all? Is a leader 70 px of dark frame at 1080 lines big enough, or would the owner give back some of the frame for size, and how many degrees? And would the owner rather have quads through each other at 5.0 than stop at 4.5?
+
+## 2026-10-04 | link preview | A picture and the tags for shared links
+
+The owner asked for a nice social media picture for https://randomdraw.webfpv.org/. The page had a title and a description and nothing else, so a pasted link unfurled as a bare title on most sites.
+
+### What changed
+
+- `og.png`, 1200 by 630, 176 KB, drawn by `tools/og.html` with the simulator's own lettering and the family palette, and written by `node scripts/og.js` through the picker's own static server and headless Chromium. It is a generated file: edit `tools/og.html` and run the script.
+- `index.html` has the Open Graph tags (type, site name, url, title, description, image with its type, size and alt) and the Twitter card tags (`summary_large_image`, title, description, image, alt), and a canonical link. The image address is absolute because a crawler has no page to resolve a relative one against.
+- `scripts/lint.js`: `https://randomdraw.webfpv.org/` is added to `ABSOLUTE_OK`. This is an allowlist entry and not a threshold, and it is the one place the rule "every URL is relative" has to bend, for the tags above. The page itself requests nothing from it, and the policy's `connect-src` is untouched.
+
+### Checks
+
+`npm run csp` (current, no style or import map edit), `npm run lint` and `npm test`, run after the change. `node scripts/shots.js` was not run: the page's body, style and script are unchanged, and only `<head>` meta tags were added.
+
+### Not verified
+
+Nobody has pasted the link into Facebook, Discord, Messenger, X, WhatsApp or LinkedIn. Each caches a link's card, so after the deploy the Facebook Sharing Debugger and LinkedIn Post Inspector need a scrape to pick it up, and Discord, WhatsApp and X may keep the old card for a while. The picture's small type is the machine's system sans and mono, so a regeneration on another machine may differ slightly.
+
+### Decision to know about
+
+The title says "Race Name Picker", the page's own name, and not "Quad Race Lottery", which is a different name for the same thing. A rename is the owner's.

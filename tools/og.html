@@ -1,0 +1,180 @@
+<!doctype html>
+<!--
+  og.html: the picture a link to the picker unfurls into, drawn.
+
+  1200 by 630, the size Facebook, Messenger, Discord, X, WhatsApp and LinkedIn
+  all show as a large card. It is drawn with the simulator's own lettering
+  (sim/src/ui/lettering.js) in the family's palette, so it is the same hand
+  as the wordmark on the page and the front door's og.jpg. `node
+  scripts/og.js` serves this page, screenshots it and writes og.jpg beside
+  index.html. It is a source, not a page anybody visits.
+
+  This file is part of the WebFPV Race Name Picker.
+
+  The WebFPV Race Name Picker is free software: you can redistribute it
+  and/or modify it under the terms of the GNU General Public License as
+  published by the Free Software Foundation, either version 3 of the
+  License, or (at your option) any later version.
+
+  The WebFPV Race Name Picker is distributed in the hope that it will be
+  useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+  General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with the WebFPV Race Name Picker. If not, see
+  <https://www.gnu.org/licenses/>.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>og</title>
+<style>html, body { margin: 0; background: #141c16; } canvas { display: block; }</style>
+</head>
+<body>
+<canvas id="c" width="1200" height="630"></canvas>
+<script type="module">
+import { INK, PAPER, INKS, drawRuns, drawWord, wordWidth } from '../sim/src/ui/lettering.js';
+
+const W = 1200;
+const H = 630;
+const ctx = document.getElementById('c').getContext('2d');
+const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+
+/* The ground and the manga page on it, the same cut as the front door's. */
+ctx.fillStyle = '#141c16';
+ctx.fillRect(0, 0, W, H);
+const M = 22;
+ctx.fillStyle = PAPER;
+ctx.fillRect(M, M, W - 2 * M, H - 2 * M);
+
+/* Speed lines, from the right edge towards the left. */
+ctx.save();
+ctx.beginPath();
+ctx.rect(M, M, W - 2 * M, H - 2 * M);
+ctx.clip();
+ctx.strokeStyle = 'rgba(11, 17, 22, 0.16)';
+ctx.lineCap = 'round';
+const lines = [[620, 40, 1180, 40, 2], [700, 118, 1180, 118, 3], [560, 188, 1180, 188, 2], [760, 262, 1180, 262, 4],
+  [640, 340, 1180, 340, 2], [740, 420, 1180, 420, 3], [600, 500, 1180, 500, 2], [720, 580, 1180, 580, 3]];
+for (const [x0, y0, x1, y1, w] of lines) {
+  ctx.lineWidth = w;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0 + 60);
+  ctx.lineTo(x1, y1 - 40);
+  ctx.stroke();
+}
+ctx.restore();
+
+/* A chequered strip down the right, the line the draw ends on. */
+const CX = 1060;
+for (let r = 0; r < 14; r += 1) {
+  for (let c = 0; c < 2; c += 1) {
+    ctx.fillStyle = (r + c) % 2 ? INK : PAPER;
+    ctx.fillRect(CX + c * 30, M + r * 30, 30, 30);
+  }
+}
+ctx.fillStyle = INK;
+ctx.fillRect(CX - 4, M, 4, H - 2 * M);
+
+/* One top down five inch quad: an X of arms, four faint prop discs, a battery. */
+function quad(cx, cy, s, tint) {
+  const a = 34 * s;
+  const arm = [[-a, -a], [a, -a], [-a, a], [a, a]];
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 9 * s;
+  for (const [x, y] of arm) {
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(x, y); ctx.stroke();
+  }
+  for (const [x, y] of arm) {
+    ctx.beginPath(); ctx.arc(x, y, 27 * s, 0, 7);
+    ctx.fillStyle = tint; ctx.globalAlpha = 0.55; ctx.fill(); ctx.globalAlpha = 1;
+    ctx.lineWidth = 3 * s; ctx.strokeStyle = INK; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, 6 * s, 0, 7); ctx.fillStyle = INK; ctx.fill();
+  }
+  ctx.fillStyle = INK;
+  ctx.beginPath(); ctx.roundRect(-13 * s, -27 * s, 26 * s, 54 * s, 6 * s); ctx.fill();
+  ctx.fillStyle = tint;
+  ctx.beginPath(); ctx.roundRect(-8 * s, -20 * s, 16 * s, 28 * s, 4 * s); ctx.fill();
+  ctx.restore();
+}
+
+/* The start grid: three rows, staggered, each with a name chip, as the page lays them out. */
+const tints = [INKS.sakura, INKS.mint, INKS.amber, INKS.slate, INKS.sakura, INKS.amber, INKS.mint, INKS.slate, INKS.sakura];
+const names = ['MAT', 'SAM', 'JESS', 'OLLIE', 'PRIYA', 'KAI', 'NOOR', 'DEV', 'ZOE'];
+const S = 0.82;
+let n = 0;
+for (let row = 0; row < 3; row += 1) {
+  for (let col = 0; col < 3; col += 1) {
+    const x = 690 + col * 112 + (row % 2) * 34;
+    const y = 112 + row * 138 + col * 12;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(-0.12);
+    quad(0, 0, S, tints[n]);
+    ctx.restore();
+    ctx.font = `800 15px ${MONO}`;
+    const tw = ctx.measureText(names[n]).width + 18;
+    ctx.fillStyle = INK;
+    ctx.beginPath(); ctx.roundRect(x - tw / 2, y + 46, tw, 23, 4); ctx.fill();
+    ctx.fillStyle = INKS.cream;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(names[n], x, y + 58);
+    n += 1;
+  }
+}
+
+/* The wordmark, small, top left, where the page has it. */
+drawRuns(ctx, [{ text: 'WEB', fill: INKS.cream }, { text: 'FPV', fill: INKS.sakura }], 64, 98, 52);
+
+/* The title, in two lines, lettered, each fitted to the column the grid leaves. */
+const COL = 540;
+let t1 = 96;
+t1 *= COL / wordWidth(ctx, 'RACE NAME', t1);
+drawWord(ctx, 'RACE NAME', 62, 222, t1, INKS.amber);
+let t2 = 150;
+t2 *= COL / wordWidth(ctx, 'PICKER', t2);
+drawWord(ctx, 'PICKER', 62, 222 + t2 * 0.86, Math.min(t2, 170), INKS.mint);
+
+/* The line under it, plain type, because that is how the page speaks. */
+ctx.fillStyle = INK;
+ctx.textAlign = 'left';
+ctx.textBaseline = 'alphabetic';
+ctx.font = `800 27px ${SANS}`;
+ctx.fillText('Names in. Quads race. Draw sealed first.', 64, 492);
+ctx.font = `500 21px ${SANS}`;
+ctx.fillStyle = '#34414a';
+ctx.fillText('Anyone can check the draw. Free, in your browser.', 64, 528);
+
+/* The seal, a stamp over the grid's foot. */
+ctx.save();
+ctx.translate(820, 568);
+ctx.rotate(-0.06);
+ctx.fillStyle = INK;
+ctx.beginPath(); ctx.roundRect(-150, -22, 300, 44, 8); ctx.fill();
+ctx.fillStyle = INKS.mint;
+ctx.font = `800 19px ${MONO}`;
+ctx.textAlign = 'center';
+ctx.textBaseline = 'middle';
+ctx.fillText('SEALED \u00b7 3F9C A1D7', 0, 1);
+ctx.restore();
+
+/* The panel's edge, over everything, and the address. */
+ctx.strokeStyle = INK;
+ctx.lineWidth = 9;
+ctx.strokeRect(M + 4.5, M + 4.5, W - 2 * M - 9, H - 2 * M - 9);
+ctx.fillStyle = INKS.cream;
+ctx.font = `800 20px ${MONO}`;
+ctx.textAlign = 'right';
+ctx.textBaseline = 'alphabetic';
+ctx.fillStyle = INKS.cream;
+ctx.fillText('randomdraw.webfpv.org', W - 6, H - 5);
+window.__ready = true;
+</script>
+</body>
+</html>
