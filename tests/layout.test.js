@@ -138,17 +138,12 @@ test('a stand is as tall as the plan says a quad sits: the ramp is a quad long a
   assert.ok(Math.abs(sit - LATTICE.blockHeight) < 0.1, `the foam's middle is ${sit.toFixed(3)} m up and the plan's block height is ${LATTICE.blockHeight}`);
 });
 
-test('marks go to the grass: round robin, down the infield, one logo each in the document', () => {
-  const marked = buildCourseFor({ logos: [{ image: PNG }, { image: PNG }, { image: PNG }] });
-  assert.deepEqual(marked.warnings, []);
-  assert.equal(marked.logos.length, 3);
-  assert.equal(marked.decals.length, 6, 'six places on the infield');
-  assert.deepEqual(marked.decals.map((d) => d.logo), [0, 1, 2, 0, 1, 2]);
-  for (const decal of marked.decals) {
-    const p = fromThree(decal.x, 0, decal.z);
-    const { u } = sideOf(p.x, p.y);
-    assert.ok(u < -8 && u > -12, `a mark is ${u} m out, in the infield strip the camera looks across`);
-  }
-  assert.equal(built.decals.length, 0, 'and a document with no marks paints none');
-  assert.equal(buildCourseFor({ logos: Array(7).fill({ image: PNG }) }).logos.length, 5, 'five is the most a document carries');
+test('the document carries no sponsor marks: the grass ones are the picker\'s own, laid for each camera (src/marks.js)', () => {
+  const doc = buildDocument();
+  assert.equal(doc.elements.filter((e) => e.type === 'groundLogo').length, 0, 'no groundLogo, which would be painted into the pitch and fixed to it');
+  assert.deepEqual(doc.branding.logos, []);
+  assert.equal(built.decals.length, 0);
+  assert.equal(built.logos.length, 0);
+  /* Nothing a caller passes puts one back, so a field is the same field whatever logos were dropped. */
+  assert.deepEqual(buildDocument({ logos: [{ image: PNG }] }), doc);
 });

@@ -37,6 +37,14 @@
  *   stay    the rail stays up when the chase camera would lose somebody: two
  *           winners drawn, and a person who has asked for less motion.
  *   bare    no WebGL, and no CDN: the draw is still made, sealed and shown.
+ *   marks   the sponsors' marks on the grass, read off rendered frames: a
+ *           world is built in the page with two marks that are right triangles
+ *           in a colour nothing else on the field is, drawn from the paddock
+ *           and the aerial in a 16 by 9 window and from the rail in a square
+ *           one, and every whole mark a frame shows is measured. Its box on
+ *           the glass has to be its logo's own shape, and the right angle has
+ *           to be at the bottom left, as it was drawn: a mark squashed,
+ *           mirrored or upside down fails, and so does one that is not there.
  *
  * EVERY CAPTURE ASSERTS ITS STATE FIRST. On a software rasteriser a frame
  * takes a tenth of a second or more, so a key press and a fixed wait can read
@@ -1191,10 +1199,187 @@ async function stay() {
   }
 }
 
+
+/*
+ * The sponsors' marks on the grass, measured on the glass. Two logos, each a
+ * magenta right triangle with its right angle at the bottom left: a shape
+ * that is its own bounding box's corner on three sides and whose weight is
+ * low and to the left, so that a mark that is squashed, mirrored or upside
+ * down is a different number. Magenta because nothing else on the field comes
+ * near it: the grass is green and the boards and the gantry are cream and
+ * slate. The boards carry no logos here, so a board cannot be mistaken for a
+ * mark.
+ *
+ * A world is built in the page on a canvas of its own (the shell sizes its
+ * drawing buffer from the window, not from the element), a frame is drawn at
+ * each pose and read back in the same task, which is when a WebGL drawing
+ * buffer that is not preserved can be read, and every blob of magenta that is
+ * whole (it touches no edge of the frame) is measured. The poses are fixed:
+ * they are pure functions of the plan and the clock, and these are ones where
+ * a mark is whole and nothing stands across it, which a flag's pole and a
+ * quad on its block sometimes do.
+ */
+const MARKS_PROBE = (graphics, poses) => `(async () => {
+  const { buildWorld } = await import('./src/world.js');
+  const { makePlan } = await import('./src/choreo.js');
+  const triangle = (w, h) => {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const g = c.getContext('2d');
+    g.fillStyle = '#ff00ff';
+    g.beginPath();
+    g.moveTo(0, 0);
+    g.lineTo(0, h);
+    g.lineTo(w, h);
+    g.closePath();
+    g.fill();
+    return { image: c, aspect: w / h };
+  };
+  const world = await buildWorld({
+    canvas: document.createElement('canvas'),
+    graphics: ${JSON.stringify(graphics)},
+    logos: { boards: [], grass: [triangle(600, 200), triangle(200, 400)] },
+  });
+  const plan = makePlan({
+    order: Array.from({ length: 12 }, (_, i) => i),
+    showSeed: '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff',
+    length: 30,
+  });
+  const gl = world.renderer.getContext();
+  const isMark = (px, i) => px[i] > 110 && px[i + 2] > 110 && px[i + 1] < 0.55 * Math.min(px[i], px[i + 2]);
+  const read = () => {
+    const w = gl.drawingBufferWidth;
+    const h = gl.drawingBufferHeight;
+    const px = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    const seen = new Uint8Array(w * h);
+    const blobs = [];
+    for (let start = 0; start < w * h; start += 1) {
+      if (seen[start] || !isMark(px, start * 4)) {
+        continue;
+      }
+      let minX = w; let maxX = 0; let minY = h; let maxY = 0; let area = 0; let sx = 0; let sy = 0; let touches = false;
+      const stack = [start];
+      seen[start] = 1;
+      while (stack.length) {
+        const p = stack.pop();
+        const x = p % w;
+        const y = (p - x) / w;
+        area += 1;
+        sx += x;
+        sy += y;
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        if (x === 0 || y === 0 || x === w - 1 || y === h - 1) {
+          touches = true;
+        }
+        const next = [];
+        if (x > 0) next.push(p - 1);
+        if (x < w - 1) next.push(p + 1);
+        if (y > 0) next.push(p - w);
+        if (y < h - 1) next.push(p + w);
+        for (const q of next) {
+          if (!seen[q] && isMark(px, q * 4)) {
+            seen[q] = 1;
+            stack.push(q);
+          }
+        }
+      }
+      if (area >= 40) {
+        /* Where the weight is against the middle of the box: across is positive to the right, up is positive upward, which is the way the rows run in a read back buffer. */
+        blobs.push({
+          w: maxX - minX + 1, h: maxY - minY + 1, area, touches, fill: area / ((maxX - minX + 1) * (maxY - minY + 1)), across: sx / area - (minX + maxX) / 2, up: sy / area - (minY + maxY) / 2,
+        });
+      }
+    }
+    return { w, h, blobs };
+  };
+  const out = [];
+  for (const pose of ${JSON.stringify(poses)}) {
+    world.frame({ plan, count: 12, ...pose });
+    out.push({ pose, picture: world.renderer.domElement.toDataURL('image/png'), ...read() });
+  }
+  const meshes = world.marks.group.children.map((m) => ({
+    mask: m.layers.mask, depthWrite: m.material.depthWrite, transparent: m.material.transparent, order: m.renderOrder,
+  }));
+  world.dispose();
+  return { frames: out, meshes };
+})()`;
+
+async function grassMarks() {
+  note(`${stamp()} marks: two triangles on the grass, read off rendered frames`);
+  /*
+   * Fixed, and found by looking. The paddock's orbit passes a mark that is
+   * whole and clear of the gantry a few times in its hundred seconds, and the
+   * aerial has them whole from a quarter of the way down. The rail has none
+   * whole in a 16 by 9 frame, where they lie along its lower edge, so it is
+   * read in a square window, which is given a taller lens and shows one whole
+   * three times in this race.
+   */
+  const runs = [
+    {
+      width: 1280,
+      height: 720,
+      poses: [
+        { shot: 'paddock', t: 0 },
+        { shot: 'paddock', t: 58 },
+        { shot: 'paddock', t: 70 },
+        { shot: 'paddock', t: 94 },
+        { shot: 'aerial', k: 0.25 },
+        { shot: 'aerial', k: 0.5 },
+        { shot: 'aerial', k: 0.7 },
+      ],
+    },
+    {
+      width: 900,
+      height: 900,
+      poses: [
+        { shot: 'rail', t: 1.75 },
+        { shot: 'rail', t: 7.25 },
+        { shot: 'rail', t: 11.25 },
+      ],
+    },
+  ];
+  const logos = [3, 0.5];
+  let whole = 0;
+  let n = 0;
+  await mkdir(OUT, { recursive: true });
+  for (const [r, run] of runs.entries()) {
+    const page = await open({ width: run.width, height: run.height });
+    try {
+      await ready(page);
+      const { frames, meshes } = await page.evaluate(MARKS_PROBE(settings.graphics, run.poses));
+      if (r === 0) {
+        /* What the pictures cannot see: that a mark is paint and not an occluder, and is drawn after the pitch (render order 0) and before a quad's discs (1), or it is lost behind the one and shows through the other. */
+        check('marks', 'six marks, each on the no ink layer alone, writing no depth, blended, and drawn between the pitch and the discs', meshes.length === 6 && meshes.every((m) => m.mask === 2 && m.depthWrite === false && m.transparent === true && m.order > 0 && m.order < 1), JSON.stringify(meshes[0]));
+      }
+      for (const frame of frames) {
+        n += 1;
+        const label = `${run.width} by ${run.height} ${JSON.stringify(frame.pose)}`;
+        await writeFile(join(OUT, `marks-${n}-${frame.pose.shot}.png`), Buffer.from(frame.picture.split(',')[1], 'base64'));
+        /* Whole: inside the frame, big enough to measure, and a triangle all the way (half its box), not one whose top a gantry's crossbar has taken. */
+        const clean = frame.blobs.filter((b) => !b.touches && b.h >= 14 && b.w >= 14 && b.fill > 0.4 && b.fill < 0.6);
+        whole += clean.length;
+        check('marks', `${label}: the frame shows a whole mark`, clean.length >= 1, `${frame.blobs.length} blobs of magenta, ${clean.length} whole`);
+        for (const b of clean) {
+          const shape = b.w / b.h;
+          const own = logos.reduce((best, a) => (Math.abs(shape / a - 1) < Math.abs(shape / best - 1) ? a : best));
+          check('marks', `${label}: a mark ${b.w} by ${b.h} px is the shape of its logo (${own}:1), not squashed`, Math.abs(shape / own - 1) < 0.12, `${shape.toFixed(2)}:1`);
+          check('marks', `${label}: and its weight is low and to the left, as it was drawn: not mirrored, not upside down`, b.across / b.w < -0.05 && b.up / b.h < -0.05, `centre of weight ${(b.across / b.w).toFixed(2)} across, ${(b.up / b.h).toFixed(2)} up`);
+        }
+      }
+      console12(`marks ${run.width} by ${run.height}`, page);
+    } finally {
+      await page.close();
+    }
+  }
+  check('marks', 'enough marks were measured to mean something', whole >= 12, `${whole}`);
+}
+
 /* ------------------------------------------------------------------ */
 
 const SCENARIOS = {
-  flow, sheet, actions, sound, reduced, reload, phone, bare, photo, stay,
+  flow, sheet, actions, sound, reduced, reload, phone, bare, photo, stay, marks: grassMarks,
 };
 
 async function main() {

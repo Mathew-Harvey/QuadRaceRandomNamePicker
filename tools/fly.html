@@ -92,8 +92,6 @@
     {
       const count = clamp(Math.round(Number(params.get('logos')) || 0), 0, 4);
       const styles = [['ACME', '#1e3566', '#f3ead4'], ['ZORP', '#b8332c', '#f3ead4'], ['LUMEN', '#f3ead4', '#141c16'], ['QUASAR', '#2a7f62', '#f3ead4']];
-      /* The grass is painted for the rail camera, which looks at it from about 25 degrees: stretched along the line of sight by 1 over the sine of that. */
-      const STRETCH = 2.2;
       for (let i = 0; i < count; i += 1) {
         const [word, bg, fg] = styles[i];
         const c = document.createElement('canvas');
@@ -108,11 +106,8 @@
         x.textBaseline = 'middle';
         x.fillText(word, 300, 108);
         marks.boards.push({ image: c, base: bg });
-        const g = document.createElement('canvas');
-        g.width = 600;
-        g.height = Math.round(200 * STRETCH);
-        g.getContext('2d').drawImage(c, 0, 0, g.width, g.height);
-        marks.grass.push({ image: g.toDataURL('image/png'), width: 8, depth: 8 * (200 * STRETCH) / 600 });
+        /* The grass takes the picture as drawn and its shape; src/marks.js lays it for whichever camera is looking. */
+        marks.grass.push({ image: c, aspect: c.width / c.height });
       }
     }
 

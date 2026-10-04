@@ -26,9 +26,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GEOMETRY } from '../src/course.js';
 import {
-  GRASS_MAX, PLACEMENTS, SLOTS, TYPES, borderColour, footprint, isOpaque, stretchFactor, trimBounds,
+  PLACEMENTS, SLOTS, TYPES, borderColour, isOpaque, trimBounds,
 } from '../src/sponsors.js';
 
 /* A w by h picture of one colour, with a function to paint into it. */
@@ -90,32 +89,6 @@ test('the colour of the border is the colour of the box', () => {
   });
   assert.equal(borderColour(px, 40, 20), '#c81e14');
   assert.equal(borderColour(picture(2, 2, [0, 128, 255, 255]), 2, 2), '#0080ff');
-});
-
-test('the grass is stretched by one over the sine of how far down the rail looks at it', () => {
-  const s = stretchFactor();
-  const across = GEOMETRY.railInset - 10;
-  const down = Math.atan2(GEOMETRY.railHeight, across);
-  assert.ok(Math.abs(s - 1 / Math.sin(down)) < 1e-12);
-  assert.ok(s > 2.2 && s < 2.3, `stretch ${s}`);
-  assert.ok(stretchFactor(GEOMETRY, 14) < s, 'a mark nearer the rail is seen from steeper, and stretched less');
-});
-
-test('a mark takes the widest footprint that fits its box, in its own shape', () => {
-  const stretch = stretchFactor();
-  /* A wide logo, three to one: limited by its depth. */
-  const wide = footprint(3, stretch);
-  assert.ok(wide.depth <= GRASS_MAX.depth + 1e-9 && wide.width <= GRASS_MAX.width + 1e-9);
-  assert.ok(Math.abs(wide.depth - GRASS_MAX.depth) < 1e-9 || Math.abs(wide.width - GRASS_MAX.width) < 1e-9, 'it fills one side of the box');
-  /* Stretched along the sight, the footprint is deeper than the picture is tall by the stretch. */
-  assert.ok(Math.abs(wide.depth / wide.width - stretch / 3) < 1e-9);
-  /* A very wide one is limited by the box's width. */
-  const banner = footprint(12, stretch);
-  assert.equal(banner.width, GRASS_MAX.width);
-  assert.ok(banner.depth < GRASS_MAX.depth);
-  /* A square one is small, and is still in its shape. */
-  const square = footprint(1, stretch);
-  assert.ok(square.width < 3.5 && Math.abs(square.depth / square.width - stretch) < 1e-9);
 });
 
 test('the rules of intake are the brief\'s: four slots, five kinds of file, three placements', () => {

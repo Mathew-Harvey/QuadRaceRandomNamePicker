@@ -63,6 +63,7 @@ import { makeCourse } from './course.js';
 import { buildCourseFor } from './layout.js';
 import { buildGantry } from './gantry.js';
 import { buildBoards } from './boards.js';
+import { buildMarks } from './marks.js';
 import { buildGrid } from './grid.js';
 import { buildFleet } from './fleet.js';
 import { makeShots, fovFor } from './camera.js';
@@ -91,7 +92,7 @@ function yieldToPaint() {
  *               for new sponsor marks and the context should live on
  *   graphics    'low', 'medium' or 'high'; the simulator's own detection when absent
  *   onProgress  called with 0 to 1 as the build advances
- *   logos       { boards: [{ image, base }], grass: [{ image }] }
+ *   logos       { boards: [{ image, base }], grass: [{ image, aspect }] }
  *
  * Throws what the shell throws when there is no WebGL, and the caller shows
  * the page that does not need it.
@@ -105,7 +106,7 @@ export async function buildWorld({
   const { renderer, camera } = shell;
 
   const course = makeCourse();
-  const simCourse = buildCourseFor({ course, logos: logos.grass || [] });
+  const simCourse = buildCourseFor({ course });
   const progress = onProgress || (() => {});
   /*
    * Chrome warns, once, when a canvas is read back more than once without
@@ -148,6 +149,10 @@ export async function buildWorld({
     course, logos: logos.boards || [], anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()),
   });
   rig.add(boards.group);
+  const marks = buildMarks({
+    course, logos: logos.grass || [], anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()), ground: groundY,
+  });
+  rig.add(marks.group);
   const grid = buildGrid({ course });
   rig.add(grid.group);
   const fleet = buildFleet({ course });
@@ -249,6 +254,8 @@ export async function buildWorld({
     camera.position.copy(eye);
     camera.up.set(0, 1, 0);
     camera.lookAt(target);
+    /* The sponsors' marks on the grass are laid for this lens, this frame. */
+    marks.aim(camera);
     const fov = offset && offset.fov ? offset.fov : fovFor(view.fov, camera.aspect, view.minH);
     if (Math.abs(camera.fov - fov) > 0.01) {
       camera.fov = fov;
@@ -272,6 +279,7 @@ export async function buildWorld({
     fleet.dispose();
     grid.dispose();
     boards.dispose();
+    marks.dispose();
     gantry.dispose();
     rig.removeFromParent();
     post.dispose();
@@ -280,7 +288,7 @@ export async function buildWorld({
 
   return {
     shell, renderer, camera, map, post, course, simCourse, quality, rig, groundY,
-    gantry, boards, grid, fleet, shots,
+    gantry, boards, marks, grid, fleet, shots,
     resize, frame, screenOf, dispose,
     /* The grade pass's own number, for the page's lens arithmetic. */
     get distort() {

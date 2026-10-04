@@ -664,3 +664,79 @@ Nobody has pasted the link into Facebook, Discord, Messenger, X, WhatsApp or Lin
 ### Decision to know about
 
 The title says "Race Name Picker", the page's own name, and not "Quad Race Lottery", which is a different name for the same thing. A rename is the owner's.
+
+
+## 2026-10-04 | milestone 5, follow up | Logos on the grass keep their shape
+
+The owner's words: "logos sprayed on the grass need to have their aspect ratio preserved, currently they are squashed". Nothing here changes the draw or the plan: the same receipt flies the same race. No decision in this entry needed the owner beforehand (no algorithm, no dependency, no partner, no other repository), but the reading in the first paragraph is a guess and is said first.
+
+### How I read it
+
+The logo has to be the shape it was drawn on the glass, in every view that shows it, and a circle has to be a circle. The pictures were never painted squashed: the simulator fits a mark into its footprint without stretching it. What squashed them was the camera. A mark lying flat is seen foreshortened by the sine of the angle the camera looks down at it, and the old code had corrected for that once, by stretching the picture 2.24 times across the track before it went into the track document, which is the way the rail camera looks and no other camera does. The reading that could be wrong is "on the glass": if the owner meant true proportions on the ground, that is the flat mark, and it is worse from every low camera.
+
+### What was wrong, measured
+
+The old code (commit 041c257) rendered in a second checkout beside this one, at the same poses as the new code (the paddock's orbit every 4 s of its 100, the aerial every tenth of the way down), 1280 by 720, a magenta right triangle as the logo so that it can be told from everything else on the field, every whole triangle read off the frame (6 px or more, 22 to 31 of them in each row of the table). The number is the logo's shape on the glass over its true shape: 1.00 is right, over 1 is too flat, under 1 is too tall.
+
+                                    old                         new
+    square badge, paddock           median 5.96 (3.3 to 12.9)   median 1.00
+    square badge, aerial            median 2.50 (0.8 to 3.8)    median 1.00
+    3 to 1 plate, paddock           median 2.23 (0.3 to 5.5)    median 0.99
+    3 to 1 plate, aerial            median 0.40 (0.3 to 1.1)    median 0.96
+
+So from the paddock a square badge was a sliver six times too flat, and from the aerial a 3 to 1 plate looked 1.2 to 1. The aerial looks along the straight and the stretch lay across its sight; the paddock's orbit looks from every side and from 12 to 20 degrees up.
+
+### What changed
+
+- **`src/spray.js`** (new, plain arithmetic, no Three.js): each frame a mark is held up as a rectangle square to the lens, at the depth of its spot and in its own shape, and each of its points is carried along the line of sight to the grass. On the ground it is a trapezoid, deeper than the mark is tall and wider at the far end; on the glass it is the rectangle again, exactly, from any camera at any angle and wherever in the frame. A mark whose top would be under 3.5 degrees below the horizon cannot be carried to the grass at any size, so it shrinks, in its own shape, to nothing as its spot nears that angle.
+- **`src/marks.js`** (new): six planes, one to a place, each cut into ten rows so the picture stays straight across the trapezoid, on layer 1, writing no depth, at render order one half (after the pitch at 0, before the quads' discs at 1), in the pitch's own cel material at the opacity the simulator paints a ground logo. `world.frame` aims them after the camera is put where the shot says.
+- **The marks left the track document.** `src/layout.js` writes no `groundLogo` and no `branding.logos`, so the field is the same field whatever is dropped in. `src/sponsors.js` loses the stretch, the footprint, the document's budget and the error "That logo is too detailed to fit on the grass"; `grassMark` is the picture at most 1024 px a side and its shape. `src/app.js` passes the marks as they are. `tools/fly.html` passed the old form and is fixed.
+- **Size.** A mark is the widest of its own shape that fits 10 m by 2.9 m, which is the 2.9 m of picture the rail has always been shown. A round logo is therefore a smaller round dot from the aerial than the old flat ellipse was long.
+- **Tests.** `tests/spray.test.js`, ten tests that fly the app's own shots (the paddock for 1, 3, 12 and 50 names over its 100 s, the aerial, the rail, the winner's picture) past the arrays the mesh is given, and project every vertex through a pinhole lens: the glass shows a rectangle, in the logo's own shape to a billionth, upright, not mirrored, at the size of a mark standing at its spot; the least angle holds; nothing pops (the worst change in size in a sixtieth of a second is 0.0005 in the paddock and 0.018 on the rail, against a limit of 0.05, which is a third of a second to go from nothing to whole). `tests/sponsors.test.js` loses the two tests of the stretch and `tests/layout.test.js` holds that the document carries no marks.
+- **`scripts/shots.js`, a `marks` scenario**: builds a world in the page on a canvas of its own with two magenta right triangles as the logos (3 to 1 and 1 to 2), draws ten poses (four of the paddock and three of the aerial in a 16 by 9 window, three of the rail in a square one), reads each frame back in the same task, and measures every whole triangle: its box on the glass has to be its logo's shape to 12 per cent, and its weight has to be low and to the left, as it was drawn. It also holds what a picture cannot show: the meshes are on the no ink layer alone, write no depth, are blended and are drawn between the pitch and the discs. Whole means a blob that touches no edge, is 14 px or more across and fills between 0.4 and 0.6 of its box (a triangle fills half), because a gantry's crossbar sometimes takes the top of a mark and a piece has the wrong shape. The rail is read in a square window because a 16 by 9 frame never has a mark whole: they lie along its lower edge, and a square window or a phone held upright is given a taller lens (`fovFor`) and has one whole a few times in a race.
+- `CLAUDE.md` has the decision, with the numbers above; the README lists the two files.
+
+### Measured
+
+    npm test        151 of 151 pass (143 before: 10 new, 2 removed)
+    npm run lint    16 of 16 clean
+    node scripts/csp.js --check   both pages current
+    node scripts/shots.js   173 of 173 checks, eleven scenarios (the ten as before and the new marks), about nine minutes of wall clock;
+        then `--only marks` again after the square window run was added to it: 46 of 46
+    the marks as the glass shows them (the table above): the median is 1.00 for a square badge and 0.99 and 0.96 for a 3 to 1 plate, and of the
+        marks 14 px or more across (whole triangles, 16 to 36 in a row) the 10th to 90th are 0.93 to 1.06; in the scenario's own frames a 1 to 2
+        mark on the rail is 112 by 220 px, 0.509 to 1 against 0.5
+
+    the new tests against 7 mutations of src/spray.js, each file put back and compared: the carry along the sight replaced by one straight down fails 3 of
+        the 10; the size ignoring the shape, the picture's u flipped, the least angle not enforced, the halving keeping the wrong side, a drop where a
+        shrink should be, and the picture's up replaced by the world's up each fail between 1 and 4
+    the marks scenario against 7 mutations, each file put back and compared: the carry straight down fails 8 of 14 checks; the picture's v flipped in the
+        mesh, which the Node tests cannot see, fails 13 of 34, and u flipped fails 12 of 34; never aimed fails every pose; on layer 0, depth write on and
+        render order 0 each fail the structural check, and render order 0 also makes every mark vanish, which is the sorting behind the pitch that the
+        comment in src/marks.js says it is there to prevent
+
+Not measured: a real GPU, a real phone, any browser but Chromium, the marks in motion at a real frame rate, and whether the owner takes the upright look from a low camera for paint.
+
+### What went wrong, in the order it was found
+
+- **I had reasoned the old marks' failure and not measured it.** The first account in my notes, "a circle comes out 3.5 to 1 from the aerial and a 3 to 1 plate 5 to 1 from the paddock", was a reading of two pictures and an estimate. Rendering the old code beside the new gave the table above, in which the paddock's worst case is a square badge twelve times too flat and a plate in the aerial is too tall and not too flat. The sentence I first wrote in `CLAUDE.md` also had the old stretch's axis backwards ("along the sight where it should have lain across"). Both are corrected to the measurement.
+- **The first run of the new tests found three faults of mine, none in the code.** The picture's v is single precision on the graphics card and my tolerance was a billionth; the aerial needs a plan and I passed none; and the size must not pop test counted a spot passing through the plane of the lens, which is a mark appearing 90 degrees off the axis and out of any picture, so those frames are skipped and the reason is in the test.
+- **The first run of the browser check failed on pieces of marks.** A flag's pole and the gantry's crossbar sometimes take part of a mark, and a piece has the wrong shape. A triangle that is whole fills half its box and a piece fills more, so "whole" now means that, and the poses were chosen by looking at the frames, not by guessing.
+- **A 16 by 9 rail frame never has a mark whole**, found by scanning the whole race for one and finding none, and I had written that it never does in any window until I scanned a square one and a phone's, which have a taller lens and show one whole three times in this race. Both statements are now in `CLAUDE.md` as they are. It is not a regression: they lie along the lower edge of a wide frame, where the old red wedge was in the corner.
+
+### Decisions to know about
+
+- **From a low camera a mark looks like a sign standing on the lawn.** Nothing foreshortens it, and foreshortening is what tells the eye a thing is on the ground. That is what a preserved shape is, and it is the cost of the owner's ask. A dial between the two (a mark half corrected, say) is a change to `src/spray.js` and the owner's to ask for.
+- **A mark is 2.9 m tall at most.** It is the number the rail always showed, kept so that the race looks as it did, and it makes the marks smaller from the aerial than the old ellipses were long. `MARK.maxHeight` and `MARK.maxWidth` are the two to change if the owner wants them bigger.
+- **The marks turn with the camera.** In the paddock's orbit each mark is the same way up on the glass all the way round, so over the 100 s it swings round its spot on the grass while the mown stripes stay where they are. That is what keeping the shape means from every side.
+
+### What I saw and did not fix
+
+- **Changing a logo, or where it goes, still rebuilds the whole field, ten seconds or so,** although the grass marks no longer touch the field: only the boards, which the world builds, still need the rebuild, and the boards could be swapped in place too. That is the flow of the setup sheet and a change to what the owner sees, so it is not made here.
+- **The rail's 16 by 9 frame never shows a mark whole, and a square one shows one a few times in a race.** They lie 10 m inside the line, which is where the lower edge of a wide frame is. Moving them nearer the track puts them under the outer lanes and the flags, and further from it puts them against the rail.
+- **A flag's pole and the gantry's posts can stand in front of a mark** from some angles. That is right, and it is why the check chooses its poses.
+- **Not seen by me: a real GPU, a real phone, any browser but Chromium, and the marks in motion at a real frame rate.**
+
+### Open questions for the owner
+
+Does the upright, sign-like look from the paddock read as right, or would the owner rather have a mark half corrected, which is still squashed a little but sits on the grass? Should the marks be bigger? And do they want the marks where the race camera sees them whole, which means moving them and means choosing what gives way?

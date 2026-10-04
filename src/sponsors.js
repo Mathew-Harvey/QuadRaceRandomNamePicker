@@ -14,24 +14,16 @@
  * it comes with the colour of its own border and the board is painted that
  * colour, and the box disappears into it.
  *
- * THE GRASS IS PAINTED FOR THE CAMERA, the way a stadium paints its pitch for
- * the main camera. The simulator's `paintGroundLogo` fits a mark into its
- * footprint without stretching it, and the rail camera sees the infield from
- * about 25 degrees up, so a mark laid flat would be foreshortened to less than
- * half its height. The image is stretched along the line of sight by one over
- * the sine of that angle before it goes into the document, so that from the
- * rail it looks the way it was drawn, and long, as pitch logos do from a
- * blimp. The footprint is worked out from the stretched image's own shape
- * and kept inside the strip of infield between the track and the rail.
- *
- * WHAT GOES INTO THE DOCUMENT is downscaled to fit the model's caps: 256 KB
- * of data URL a mark and 384 KB together (sim/src/trackbuilder/model.js). The
- * boards use the full image.
+ * THE GRASS TAKES THE MARK AS DRAWN. It is not stretched, fitted to a box or
+ * encoded to fit a document: src/spray.js lays it on the grass afresh every
+ * frame for the camera that is looking, in its own shape, and src/marks.js
+ * is the meshes. All the grass needs from here is the picture, at a size a
+ * graphics card is glad of, and its width over its height.
  *
  * WHAT IS KEPT is a smaller copy, 640 pixels a side, as a data URL in the
  * store, so a reload brings the marks back. The pure parts (trimming, opacity,
- * the border colour, the footprint) take plain pixel arrays and are held by
- * tests in Node; the rest needs a canvas.
+ * the border colour) take plain pixel arrays and are held by tests in Node;
+ * the rest needs a canvas.
  *
  * This file is part of the WebFPV Race Name Picker.
  *
@@ -50,23 +42,15 @@
  * <https://www.gnu.org/licenses/>.
  */
 
-import { GEOMETRY } from './course.js';
-
 export const SLOTS = 4;
 export const MAX_BYTES = 10 * 1024 * 1024;
 export const TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/gif'];
 export const PLACEMENTS = ['both', 'boards', 'grass'];
 
-/* The most a decoded mark is kept at, and the most the kept copy is. */
+/* The most a decoded mark is kept at, the most the kept copy is, and the most the grass's copy is: a mark is at most 10 m across, which a thousand pixels does at a centimetre each. */
 const WORK = 1600;
 const KEPT = 640;
-/* The document's caps, from sim/src/trackbuilder/model.js: 256 KB each, 384 KB together. */
-const DOC_EACH = 256 * 1024;
-const DOC_TOTAL = 384 * 1024;
-
-/* How far in from the line the grass marks stand (src/layout.js), and the room they have: the footprint's largest width and depth in metres. */
-const GRASS_INSET = 10;
-export const GRASS_MAX = Object.freeze({ width: 10, depth: 6.5 });
+const GRASS = 1024;
 
 /* ------------------------------------------------------------------ */
 /* Pixels                                                              */
@@ -136,35 +120,6 @@ export function borderColour(rgba, w, h) {
   }
   const hex = (v) => Math.round(v / Math.max(1, n)).toString(16).padStart(2, '0');
   return `#${hex(r)}${hex(g)}${hex(b)}`;
-}
-
-/* ------------------------------------------------------------------ */
-/* The grass                                                           */
-/* ------------------------------------------------------------------ */
-
-/*
- * How much the grass mark is stretched along the line of sight: one over the
- * sine of the angle the rail looks down at the middle of the strip the marks
- * stand in. The rail is 5 m up and 20 m from the line, the marks 10 m from it,
- * so 10 m away and 5 m up, 26.6 degrees, a stretch of 2.24.
- */
-export function stretchFactor(geometry = GEOMETRY, inset = GRASS_INSET) {
-  const across = geometry.railInset - inset;
-  const depression = Math.atan2(geometry.railHeight, across);
-  return 1 / Math.sin(depression);
-}
-
-/*
- * The footprint of a mark on the grass, in metres: `aspect` is the mark's
- * width over its height before stretching. The stretched image is aspect /
- * stretch wide for its height, so a footprint of width W is W * stretch /
- * aspect deep, and the mark takes the widest footprint that fits the box it
- * has: 10 m across the line and 6.5 m deep.
- */
-export function footprint(aspect, stretch = stretchFactor(), box = GRASS_MAX) {
-  const fromDepth = (box.depth * aspect) / stretch;
-  const width = Math.min(box.width, fromDepth);
-  return { width, depth: (width * stretch) / aspect };
 }
 
 /* ------------------------------------------------------------------ */
@@ -275,30 +230,9 @@ export async function readLogo(file, placement = 'both') {
 /* What the boards take: the mark's canvas, and the colour of the panel it stands on when it is a box. */
 export const boardMark = (logo) => ({ image: logo.canvas, base: logo.base });
 
-/*
- * What the grass takes: the mark stretched for the camera and encoded to fit
- * its share of the document's budget, with the footprint it paints. `share` is
- * how many marks are going to the grass, so the whole is under the cap.
- */
-export function grassMark(logo, share = 1) {
-  const stretch = stretchFactor();
-  const budget = Math.min(DOC_EACH, Math.floor(DOC_TOTAL / Math.max(1, share))) - 1024;
-  let width = Math.min(1024, logo.canvas.width);
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const c = canvasOf(width, (width / logo.aspect) * stretch);
-    c.getContext('2d').drawImage(logo.canvas, 0, 0, c.width, c.height);
-    /* WebP where the browser can write it, PNG where it cannot: both keep transparency, and both are on the document's list. */
-    let url = c.toDataURL('image/webp', 0.86);
-    if (!url.startsWith('data:image/webp')) {
-      url = c.toDataURL('image/png');
-    }
-    if (url.length <= budget) {
-      const f = footprint(logo.aspect, stretch);
-      return { image: url, width: f.width, depth: f.depth, name: logo.name };
-    }
-    width = Math.floor(width * 0.8);
-  }
-  throw new Error('That logo is too detailed to fit on the grass. Try a simpler one.');
+/* What the grass takes: the mark as drawn, at most 1024 pixels a side, and its shape. src/spray.js and src/marks.js do the rest. */
+export function grassMark(logo) {
+  return { image: drawn(logo.canvas, logo.canvas.width, logo.canvas.height, GRASS), aspect: logo.aspect, name: logo.name };
 }
 
 /* A small picture of the mark for its slot. */

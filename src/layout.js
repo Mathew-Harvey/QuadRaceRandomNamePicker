@@ -27,8 +27,13 @@
  *   world's merged scenery and cannot be hidden, which is why the row it
  *   makes is the one every grid has.
  *
- *   A groundLogo per sponsor mark, round robin, down the infield where the
- *   race camera looks at them, if the caller has marks to paint.
+ *   No sponsor marks. The grass marks used to be groundLogo elements here,
+ *   painted into the pitch by the simulator, and a mark painted into the
+ *   ground is fixed to it: it is foreshortened by the angle each camera sees
+ *   it at, and from the paddock and the aerial a circle was a flat ellipse.
+ *   They are the picker's own now (src/marks.js), laid on the grass afresh
+ *   for the camera of each frame (src/spray.js), so the document is the same
+ *   whatever logos a person has dropped in.
  *
  * The document is built in the plan's frame, Z up, with the field's middle at
  * the origin, and moved by half the field into the document's own corner
@@ -103,9 +108,6 @@ export const PAD_SIZE = 0.6 * BLOCK_SCALE;
 
 /* How far inside the line a flag stands: the inner edge of the 12 m track. */
 const FLAG_INSET = 6;
-/* The distance from the line to the infield's logos, and how deep they are across. */
-const LOGO_INSET = 10;
-const LOGO_DEPTH = 6;
 
 /* Where the flags go along the line, in metres from the start line. */
 function flagStations(course) {
@@ -128,14 +130,12 @@ function flagStations(course) {
  * The document.
  *
  *   course   from makeCourse()
- *   logos    marks to paint on the grass: [{ image }], data URLs, already
- *            stretched for the camera; none by default
  *
  * Returns the plain document. It is not normalised here: courseFromDocument
  * normalises it, and a document the reader repairs would be a document with
  * a bug in this file.
  */
-export function buildDocument({ course = makeCourse(), logos = [] } = {}) {
+export function buildDocument({ course = makeCourse() } = {}) {
   const doc = createTrack('WebFPV Race Name Picker');
   /* A fixed id, because the simulator's makes one from the engine's random function and a document that changes on every load is not a document. */
   doc.id = 'trk-webfpv-picker';
@@ -160,30 +160,7 @@ export function buildDocument({ course = makeCourse(), logos = [] } = {}) {
   pads.dims = { pads: course.lanes, spacing: LATTICE.laneSpacing, padSize: PAD_SIZE };
   doc.elements.push(pads);
 
-  /* The marks. Each gets an entry in the branding and a decal on the infield. */
-  const marks = logos.slice(0, 5);
-  doc.branding.logos = marks.map((m, i) => ({ id: `logo-${i + 1}`, image: m.image, name: m.name || `Logo ${i + 1}` }));
-  if (marks.length) {
-    const spots = logoStations(course);
-    spots.forEach((s, i) => {
-      course.place(s, -LOGO_INSET, 0, at);
-      const el = createElement(doc, 'groundLogo', { x: at.x + cx, y: at.y + cy }, at.theta);
-      el.logoId = doc.branding.logos[i % marks.length].id;
-      el.dims = { width: marks[i % marks.length].width || 10, depth: marks[i % marks.length].depth || LOGO_DEPTH };
-      doc.elements.push(el);
-    });
-  }
   return doc;
-}
-
-/* Where the grass marks go: down the infield side of both straights and at the middle of each bend, six places the race camera sees across the track. */
-function logoStations(course) {
-  const g = course.geometry;
-  const arc = g.radius * (Math.PI - g.spiral / g.radius);
-  const bend = g.straight / 2 + g.spiral + arc / 2;
-  const north = g.straight / 2 + 2 * g.spiral + arc + g.straight / 2;
-  const bendTwo = g.straight / 2 + 2 * g.spiral + arc + g.straight + g.spiral + arc / 2;
-  return [-g.straight / 4, g.straight / 4 + 4, bend, north - 14, north + 14, bendTwo];
 }
 
 /* The course the world is built from, with the simulator's racing line painted on nothing: the fleet flies the plan's line and a yellow dash under it would be a second one. */

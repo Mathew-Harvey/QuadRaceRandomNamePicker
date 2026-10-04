@@ -406,19 +406,13 @@ function persistLogos() {
   store.set('logos', logos.filter(Boolean).map(pack));
 }
 
-/* What the world is built with: the boards take the mark as drawn, the grass takes it stretched for the camera and fitted to the document's budget. */
+/* What the world is built with: the boards and the grass both take the mark as drawn, and the grass lays it for the camera every frame (src/spray.js). */
 function marksForWorld() {
   const shown = logos.filter(Boolean);
-  const onGrass = shown.filter((l) => l.placement !== 'boards');
-  const grass = [];
-  for (const logo of onGrass) {
-    try {
-      grass.push(grassMark(logo, onGrass.length));
-    } catch (e) {
-      say(`${logo.name}: ${e.message}`, true);
-    }
-  }
-  return { boards: shown.filter((l) => l.placement !== 'grass').map(boardMark), grass };
+  return {
+    boards: shown.filter((l) => l.placement !== 'grass').map(boardMark),
+    grass: shown.filter((l) => l.placement !== 'boards').map(grassMark),
+  };
 }
 
 function afterLogosChanged() {
@@ -668,8 +662,8 @@ async function buildField() {
   }
   markField('building');
   renderStatus();
-  const marks = marksForWorld();
   try {
+    const marks = marksForWorld();
     if (!webglOk()) {
       throw new Error('this browser has no WebGL');
     }

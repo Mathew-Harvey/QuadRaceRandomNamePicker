@@ -62,7 +62,7 @@ npm run csp        rewrite each page's Content-Security-Policy from its text (af
 node scripts/shots.js
 ```
 
-`scripts/shots.js` drives headless Chromium through the real flow and leaves pictures in `.shots/`, which is not committed. `--only flow,sheet,actions,sound,reduced,reload,phone,photo,stay,bare` runs some of the scenarios. It takes minutes on a software rasteriser. Each capture asserts what the page says before the picture is taken, the console is checked for errors, warnings and policy reports in every scenario, and the page is read every few tens of milliseconds through a race to prove the results do not exist in the document before the winner crosses.
+`scripts/shots.js` drives headless Chromium through the real flow and leaves pictures in `.shots/`, which is not committed. `--only flow,sheet,actions,sound,reduced,reload,phone,photo,stay,bare,marks` runs some of the scenarios. It takes minutes on a software rasteriser. Each capture asserts what the page says before the picture is taken, the console is checked for errors, warnings and policy reports in every scenario, and the page is read every few tens of milliseconds through a race to prove the results do not exist in the document before the winner crosses.
 
 ## What is where
 
@@ -73,6 +73,7 @@ node scripts/shots.js
 | `src/choreo.js`, `src/course.js` | The race as a pure function of time, made after the draw, on a stadium whose bends have raised cosine transitions. |
 | `src/camera.js`, `src/lens.js` | The shots, as pure functions of the plan and the clock, and the lens arithmetic that puts a tag over a quad. |
 | `src/world.js`, `src/fleet.js`, `src/grid.js`, `src/layout.js` | The simulator's field built round that course, the instanced fleet of up to fifty quads, the start grid. |
+| `src/spray.js`, `src/marks.js`, `src/boards.js` | The sponsors' marks: on the grass, laid afresh for each camera so a logo is the shape it was drawn (the arithmetic, then the meshes), and on the boards round the track. |
 | `src/hud.js`, `src/page.js`, `src/results.js`, `src/titles.js` | The overlay, the manga results page, and the lettering. |
 | `src/show.js`, `src/sound.js`, `src/paddock.js`, `src/store.js`, `src/sponsors.js` | The show's arithmetic, the sound, how a quad arrives on its block, the browser storage, the logos. |
 | `verify.html`, `tools/verify.mjs`, `tools/verify.py` | Three ways to check a receipt. |
