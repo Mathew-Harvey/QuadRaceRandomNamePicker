@@ -267,6 +267,26 @@ const text = (page, selector) => page.evaluate(`document.querySelector(${JSON.st
 const exists = (page, selector) => page.evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}))`);
 const state = (page) => page.evaluate('document.body.dataset.state');
 
+/*
+ * Where the leader is on the glass, read from outside the page the way every
+ * quad is, through its tag: the name in first place in the timing tower, where
+ * that name's tag stands across the window, and how many of the leading five
+ * have a tag on the glass at all. The owner's words, 2026-10-04: "center the
+ * camera such that the leader is not in the center of the viewport but to the
+ * right hand edge, so the entire field is in view more often". The leading
+ * three's tags are placed even where the pack is thick (src/app.js), so the
+ * leader's is there whenever the leader is on the glass.
+ */
+const framingOf = (page) => page.evaluate(`(() => {
+  const place = (n) => [...document.querySelectorAll('#hud-tower .row')].find((r) => !r.hidden && r.querySelector('.pl').textContent === String(n));
+  const names = [1, 2, 3, 4, 5].map((n) => place(n)?.querySelector('.nm').textContent ?? null);
+  const stands = new Map([...document.querySelectorAll('#hud-tags .tag:not([hidden])')].map((t) => {
+    const r = t.getBoundingClientRect();
+    return [t.querySelector('span').textContent, r.left + r.width / 2];
+  }));
+  return { leader: names[0], across: stands.has(names[0]) ? stands.get(names[0]) / window.innerWidth : null, onGlass: names.filter((n) => n !== null && stands.has(n)).length };
+})()`);
+
 /* The draws this browser holds, newest first, as the page's own store wrote them. */
 async function log(page) {
   const raw = await page.evaluate("localStorage.getItem('webfpv-picker/v1/log')");
@@ -394,6 +414,7 @@ async function flow() {
     let samples = 0;
     let midShot = false;
     let finishShot = false;
+    let framing = null;
     let last = null;
     const deadline = Date.now() + 15 * 60 * 1000;
     note(`${stamp()} racing`);
@@ -422,6 +443,7 @@ async function flow() {
       if (!midShot && s.state === 'race' && seconds >= 12) {
         midShot = true;
         await shot(page, '05-race-mid');
+        framing = await framingOf(page);
       }
       if (!finishShot && s.state === 'finish' && s.beat === `${winner} wins`) {
         finishShot = true;
@@ -435,6 +457,7 @@ async function flow() {
     check('13', `no results page, panel, winner title or order in the document at any of ${samples} samples before the results`, violations.length === 0, JSON.stringify(violations[0]));
     check('11', 'the race said Go, and named the winner once she crossed', beats.includes('Go') && beats.includes(`${winner} wins`), beats.join(' | '));
     check('11', 'a mid race picture and a finish picture were taken at the moments they are pictures of', midShot && finishShot, `mid ${midShot}, finish ${finishShot}`);
+    check('frame', 'half way round, the leader is toward the right hand edge of the window and the leading five are on the glass', framing && framing.across !== null && framing.across >= 0.7 && framing.onGlass >= 4, JSON.stringify(framing));
 
     /* The results. Everything on the page is the draw's. */
     await page.until("Boolean(document.querySelector('#results .winner-name')) && Boolean(document.querySelector('#results .seal-panel .print'))", 30000, 'the results page');
@@ -956,6 +979,8 @@ async function phone() {
     await page.until("document.body.dataset.state === 'race'", 120000, 'the race');
     await page.sleep(1500);
     await shot(page, 'p2-race');
+    const held = await framingOf(page);
+    check('phone', 'on a phone held upright the leader is toward the right hand edge and the leading five are on the glass', held.across !== null && held.across >= 0.7 && held.onGlass >= 4, JSON.stringify(held));
     const overflowRace = await page.evaluate('document.documentElement.scrollWidth - innerWidth');
     check('phone', 'the race overlay does not scroll the page sideways', overflowRace <= 0, String(overflowRace));
     await page.until("document.body.dataset.state === 'results'", 300000, 'the results');
@@ -1314,7 +1339,12 @@ async function grassMarks() {
    * aerial has them whole from a quarter of the way down. The rail has none
    * whole in a 16 by 9 frame, where they lie along its lower edge, so it is
    * read in a square window, which is given a taller lens and shows one whole
-   * three times in this race.
+   * at some of the poses of this race. Which poses is a fact about the plan and
+   * the camera, so they were found again, by scanning the race every half
+   * second in that window (59 poses, six of them show a whole mark, at 2, 11.5,
+   * 16, 18.5, 21.5 and 25 s), when the rail began to hold the leader toward the
+   * right hand edge (2026-10-04): 1.75, 7.25 and 11.25 were the old rail's. The
+   * criteria for a whole mark below are the old ones.
    */
   const runs = [
     {
@@ -1334,9 +1364,9 @@ async function grassMarks() {
       width: 900,
       height: 900,
       poses: [
-        { shot: 'rail', t: 1.75 },
-        { shot: 'rail', t: 7.25 },
-        { shot: 'rail', t: 11.25 },
+        { shot: 'rail', t: 11.5 },
+        { shot: 'rail', t: 18.5 },
+        { shot: 'rail', t: 25 },
       ],
     },
   ];

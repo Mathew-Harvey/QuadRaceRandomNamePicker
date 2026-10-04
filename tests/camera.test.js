@@ -36,7 +36,7 @@ import { GRID, makeCourse } from '../src/course.js';
 import { FLIP, makePlan } from '../src/choreo.js';
 import {
   AERIAL_FOV, CALM_FOV, CALM_MIN_HORIZONTAL, CALM_YAW, FINISH_FOV, FINISH_MIN_HORIZONTAL, FIRST_LAMP_K, HERO_AFTER, HERO_DISTANCE, HERO_FLOOR, HERO_FOV,
-  HERO_MIN_HORIZONTAL, HERO_RISE, MIN_HORIZONTAL, OPEN_FOV, PHOTO_CLOSE, PHOTO_FIT, PHOTO_FOV, QUAD_HALF, RAIL_FOV, fovFor, makeShots,
+  HERO_MIN_HORIZONTAL, HERO_RISE, MIN_HORIZONTAL, OPEN_FOV, PHOTO_CLOSE, PHOTO_FIT, PHOTO_FOV, QUAD_HALF, RAIL_FOV, RAIL_LEADER, fovFor, makeShots,
 } from '../src/camera.js';
 import {
   LIGHTS, RESULTS_AFTER, advanceClock, slowWindow, winnerCut,
@@ -87,6 +87,8 @@ test('the rail turns no faster than 50 degrees a second, over every plan, 120 ti
   }
   console.log(`camera: the rail's worst yaw rate over ${PLANS.length} plans is ${worst.toFixed(1)} degrees a second`);
   assert.ok(worst <= 50, `the rail turns ${worst} degrees a second`);
+  /* The brief's 50 is the limit, and the camera holds itself to 44 (MAX_YAW in src/camera.js), a little over it only where a spiral is tightening under a step: 44.6 before the camera started early for the bends, 46.5 the first time it did and its limit was read where a step began. */
+  assert.ok(worst <= 44.5, `the rail turns ${worst} degrees a second, over the 44 it is held to`);
 });
 
 test('the leader is in frame from the end of the launch to the line, at 16 by 9, in a square window and held upright on a phone', () => {
@@ -116,6 +118,86 @@ test('the leader is in frame from the end of the launch to the line, at 16 by 9,
     }
     console.log(`camera: the leader is out of frame in ${out} of ${frames} frames at aspect ${aspect.toFixed(2)}`);
     assert.equal(out, 0, `the leader leaves the frame in ${out} of ${frames} frames at aspect ${aspect}`);
+  }
+});
+
+/* How far to the right of the middle of a shot's frame a point is, as a share of the way to its right edge: negative is to the left. */
+function rightOfMiddle(view, point, aspect) {
+  const yaw = Math.atan2(view.ty - view.y, view.tx - view.x);
+  const bearing = wrap(Math.atan2(point.y - view.y, point.x - view.x) - yaw);
+  const vertical = (fovFor(view.fov, aspect, view.minH) * Math.PI) / 180;
+  const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * aspect);
+  return -bearing / (horizontal / 2);
+}
+
+/*
+ * The owner's words (2026-10-04): "center the camera such that the leader is not
+ * in the center of the viewport but to the right hand edge, so the entire field is
+ * in view more often". Over the nine plans, from 4 s (the lens has closed) to 4 s
+ * before the winner (the rail has not begun to come round to the finish), at
+ * three shapes of window, the numbers of the rail before it held the leader to the
+ * right were: the leader at 0.40 to 0.46 of the way to the LEFT edge at the
+ * median, the leading ten in the frame in 45 to 60 per cent of the frames and the
+ * whole field in 12 to 20. The thresholds are between that and what it does now (the
+ * leader at 0.74, the leading ten in 93 to 94 per cent and the whole field in 74 to
+ * 78), and the leader is never pushed to the edge (0.95 here, and the test before
+ * this one holds it in the frame at all).
+ */
+test('the rail holds the leader toward the right hand edge, and the leading ten are in view in nearly every frame', () => {
+  const view = {};
+  const pose = {};
+  const rank = [];
+  for (const aspect of [16 / 9, 1, 9 / 16]) {
+    const where = [];
+    let frames = 0;
+    let tenIn = 0;
+    let allIn = 0;
+    let worstPlan = { share: 1, name: '' };
+    for (const { plan, n, length } of PLANS) {
+      const winner = Math.min(...plan.finish);
+      let mine = 0;
+      let ours = 0;
+      for (let t = 4; t <= winner - 4; t += 1 / 30) {
+        shots.rail(plan, t, view, false, aspect);
+        plan.rank(t, rank);
+        let ten = 0;
+        let all = 0;
+        for (let p = 0; p < n; p += 1) {
+          plan.pose(rank[p], t, pose);
+          if (p === 0) {
+            where.push(rightOfMiddle(view, pose, aspect));
+          }
+          if (inFrame(view, pose, aspect)) {
+            all += 1;
+            if (p < Math.min(10, n)) {
+              ten += 1;
+            }
+          }
+        }
+        frames += 1;
+        mine += 1;
+        if (ten === Math.min(10, n)) {
+          tenIn += 1;
+          ours += 1;
+        }
+        if (all === n) {
+          allIn += 1;
+        }
+      }
+      if (ours / mine < worstPlan.share) {
+        worstPlan = { share: ours / mine, name: `${n} names, ${length} s` };
+      }
+    }
+    where.sort((a, b) => a - b);
+    const median = where[Math.floor(where.length / 2)];
+    const tenth = where[Math.floor(where.length / 10)];
+    console.log(`camera: at aspect ${aspect.toFixed(2)} the leader is ${median.toFixed(2)} of the way to the right edge at the median (10th percentile ${tenth.toFixed(2)}, most ${where.at(-1).toFixed(2)}), the leading ten are in view in ${(100 * tenIn / frames).toFixed(0)} per cent of ${frames} frames and the whole field in ${(100 * allIn / frames).toFixed(0)}; the least of any plan is ${(100 * worstPlan.share).toFixed(0)} (${worstPlan.name})`);
+    assert.ok(median >= RAIL_LEADER - 0.15 && median <= RAIL_LEADER, `the leader is ${median} of the way to the right edge at the median, held at ${RAIL_LEADER}`);
+    assert.ok(tenth >= 0.3, `and a tenth of the time it is no nearer the middle than ${tenth}`);
+    assert.ok(where.at(-1) <= 0.95, `and never as far as ${where.at(-1)}, which is the edge`);
+    assert.ok(tenIn / frames >= 0.85, `the leading ten are in view in ${tenIn / frames} of the frames`);
+    assert.ok(worstPlan.share >= 0.6, `and in ${worstPlan.share} of them in ${worstPlan.name}`);
+    assert.ok(allIn / frames >= 0.6, `the whole field is in view in ${allIn / frames} of the frames`);
   }
 });
 

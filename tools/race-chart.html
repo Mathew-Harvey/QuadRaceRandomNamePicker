@@ -222,6 +222,9 @@ function numbers(plan, m) {
     ['winner time', `${m.winnerTime.toFixed(2)} s, ${(m.winnerRatio * 100).toFixed(0)}% of the length, ${m.laps} laps`, m.winnerRatio >= 0.9 && m.winnerRatio <= 1.1 ? 'ok' : 'bad'],
     ['leads at half distance', String(m.leadsAtHalf), ''],
     ['lead changes in the last third', String(m.finalThirdChanges), ''],
+    ['leading five, first over fifth', `${m.top5at60.toFixed(1)} m at 60% of the winner's time, ${m.top5at80.toFixed(1)} m at 80%`, ''],
+    ['first over second at 80%', `${m.lead80.toFixed(1)} m (${m.lead60.toFixed(1)} m at 60%)`, ''],
+    ['lead changes before 80%', String(m.changesTo80), ''],
     ['winning margin', `${m.margin.toFixed(3)} s`, ''],
   ];
   $('numbers').replaceChildren(...rows.map(([name, value, cls]) => {

@@ -18,12 +18,13 @@
  *              on the grid is a speck and its tag unreadable.
  *   aerial     high over the field, then down to the rail, for the lights.
  *   rail       the race: side on from the infield, on a rail concentric with
- *              the line, following the leading group, leaving room ahead.
- *              It glides to a stop short of the line, turning to look at the
- *              line as it stops, so the pack crosses a still frame with the
- *              line in the middle of it and room after the line for the flip.
- *              At the finish the lens narrows on the winner, and on the first
- *              two quads in a photo finish.
+ *              the line, holding the leader toward the right hand edge of the
+ *              frame so that the field that follows it is in view. It glides
+ *              to a stop short of the line, turning to look at the line as it
+ *              stops, so the pack crosses a still frame with the line in the
+ *              middle of it and room after the line for the flip. At the
+ *              finish the lens narrows on the winner, and on the first two
+ *              quads in a photo finish.
  *   held       the rail's frame where it stops, as a fixed shot.
  *   hero       the winner, close: a moment after the line for the results
  *              page's big panel, and from just after the line to the results
@@ -62,12 +63,11 @@ import { GRID, cosPi, sinPi } from './course.js';
 
 /*
  * The rail's lens: 34 degrees high, wider at the start, where the grid and the
- * pack are both in the picture, with the camera aiming 4.5 m ahead of the pack
- * once the launch is over. It is the frame the rail was built with, and the
- * owner has said to keep it (2026-10-04: "just make the quads larger during
- * the race, don't zoom in to make the frame narrower"). It had been brought in
- * to 26 degrees, aiming 3 m ahead, to make the quads bigger on the glass, and
- * that is the zoom the owner did not want. The size is src/layout.js's
+ * pack are both in the picture. It is the frame the rail was built with, and
+ * the owner has said to keep it (2026-10-04: "just make the quads larger
+ * during the race, don't zoom in to make the frame narrower"). It had been
+ * brought in to 26 degrees, aiming 3 m ahead, to make the quads bigger on the
+ * glass, and that is the zoom the owner did not want. The size is src/layout.js's
  * FLEET_SCALE now, which is 4.5, and the lens only has to show the race: the
  * leading quads are about 127 pixels across at 1080 lines (the brief asked for
  * 40, and at 48 a person watching found them hard to follow). MIN_HORIZONTAL
@@ -85,14 +85,49 @@ export const AERIAL_FOV = 54;
  * round a bend would lose it, so it does not try: when the leader is further
  * than CALM_CUT of the way from the middle of the frame to its edge, the
  * camera is put where it would have been, in one cut, and is still. It aims
- * only 1.5 m ahead of the group, where the race rail aims 4.5, so the leader
- * starts near the middle and the room to lag in is most of the frame. The
- * frame is the one the window really has, so the table is made for an aspect.
+ * only 1.5 m ahead of the group and holds the leader near the middle, where the
+ * race rail holds it toward the right hand edge, so that the room to lag in is
+ * most of the frame. The frame is the one the window really has, so the table
+ * is made for an aspect.
  */
 export const CALM_FOV = 56;
 export const CALM_YAW = 25;
 export const CALM_CUT = 0.8;
 export const CALM_AHEAD = 1.5;
+
+/*
+ * WHERE THE RAIL HOLDS THE LEADER. The owner's words (2026-10-04): "center the
+ * camera such that the leader is not in the center of the viewport but to the
+ * right hand edge, so the entire field is in view more often". The rail had
+ * aimed 4.5 m ahead of the group, which is room for the pack to cross and put
+ * the leader 40 per cent of the way to the LEFT edge of the frame (the median
+ * over the nine plans of tests/camera.test.js at 16 by 9), with the quads behind
+ * it off the edge: the leading ten were all in the frame in 45 to 60 per cent of
+ * its frames, and the whole field in 12 to 20. Now the camera is put so that the
+ * leader is RAIL_LEADER of the way from the middle of the frame to its right
+ * edge, in whatever lane it flies in
+ * (the same distance along the track is a bigger angle for a quad in the lane
+ * nearest the rail), and the pack that follows it fills the frame to its left.
+ * It is an angle and not a distance, so a phone's narrower frame and a wide
+ * window's wider one each get the same share of their own.
+ *
+ * The turn limit holds the camera back in a fast bend and the leader runs on
+ * to the right, which at the edge of the frame is out of it, so the camera is
+ * never allowed to be more than RAIL_LAG metres behind where it should be: it
+ * starts early, at the pack's speed and RAIL_RUN_AHEAD more, and the leader
+ * drifts toward the middle before the bend and back to the edge through it. In
+ * the last stretch the camera comes round to the finish frame, which has the
+ * leader a little left of the middle (RAIL_FINISH_BEARING) with the camera
+ * parked and looking at the line, as it always had: that takes the leader's
+ * last RAIL_RUN_IN metres short of the stop, and it is there at RAIL_RUN_OUT.
+ */
+export const RAIL_LEADER = 0.78;
+export const RAIL_LEADER_START = 11;
+export const RAIL_FINISH_BEARING = -9.8;
+export const RAIL_RUN_IN = 60;
+export const RAIL_RUN_OUT = 10;
+export const RAIL_LAG = 0.5;
+export const RAIL_RUN_AHEAD = 8;
 
 /* When in the lights' run the first amber lamp is lit, as a fraction of it, at the latest: the gantry is in frame from here to green. */
 export const FIRST_LAMP_K = 0.385;
@@ -261,11 +296,11 @@ export function makeShots({ course }) {
   }
 
   /*
-   * Where the pack is, for the rail to follow: three parts leader to one part
-   * the mean of the leading five, averaged over a fifth of a second either
-   * side so a
-   * lead change, which makes the leader's identity jump but never its
-   * progress, cannot put a kink in the camera's speed.
+   * Where the pack is, for the calm rail to follow (the race rail follows the
+   * leader, see leaderTable): three parts leader to one part the mean of the
+   * leading five, averaged over a fifth of a second either side so a lead
+   * change, which makes the leader's identity jump but never its progress,
+   * cannot put a kink in the camera's speed.
    */
   function groupAt(plan, t) {
     const n = plan.count;
@@ -353,38 +388,97 @@ export function makeShots({ course }) {
    * turns at the pack's own rate, which is its speed over the bend's radius,
    * and a quad at 28 m/s on a 30 m radius is 53 degrees a second. So the
    * camera is not allowed to go round a bend faster than 44 degrees a second
-   * allows (23 m/s on this radius), and falls a few metres behind the pack
-   * for the length of the fastest stretch, which is a few degrees of the
-   * 57 the frame is wide, and catches up on the next straight.
+   * allows (23 m/s on this radius), and falls behind the pack for the length of
+   * the fastest stretch, which is why the rail starts early (RAIL_LAG).
    */
-  /*
-   * Where the rail aims relative to the group, in metres ahead of it: behind
-   * it at the start, so the grid fills the left of the frame and the
-   * gantry's near upright, which stands at the line, is well to the right of
-   * the middle and not a pole through it, and 4.5 m ahead of it once the
-   * launch is over, which is room for the pack to cross.
-   */
-  const AHEAD_START = -4;
-  const AHEAD_RACE = 4.5;
   const MAX_YAW = (44 * Math.PI) / 180;
   const MAX_SPEED = 80;
   const CATCH_UP = 1.5;
   const TABLE_HZ = 60;
-  const tables = new WeakMap();
-  /* One table per window shape, in quarters of an aspect: the cuts depend on how wide the frame is. */
+  /* One table per window shape, in quarters of an aspect: the cuts of the calm rail and where the race rail puts the leader depend on how wide the frame is. */
+  const raceTables = new Map();
   const calmTables = new Map();
+  const leaders = new WeakMap();
   const here = {};
   const calmEye = {};
   const calmAim = {};
   const calmLeader = {};
   const calmWhere = {};
+  const leaderWhere = {};
+  const probeEye = {};
+  const probeAim = {};
+  const probeQuad = {};
+
+  /* The fastest the camera may go along the line where it is: the turn limit in a bend, and the camera's own top speed on a straight. */
+  function speedLimit(s, maxYaw) {
+    course.at(s, here);
+    const curvature = Math.abs(here.kappa);
+    return curvature > 1e-6 ? Math.min(MAX_SPEED, maxYaw / curvature) : MAX_SPEED;
+  }
+
+  /*
+   * The leader's progress and lane at every sixtieth of a second of a plan,
+   * each the average of the leader over a fifth of a second either side, as the
+   * group's is, so that a lead change, which makes the leader's identity jump
+   * and never its progress, moves the lane over a moment and not in one frame.
+   * It is the same for every window shape, so it is made once per plan.
+   */
+  function leaderTable(plan) {
+    const known = leaders.get(plan);
+    if (known) {
+      return known;
+    }
+    const frames = Math.ceil(plan.duration * TABLE_HZ) + 2;
+    const s = new Float64Array(frames);
+    const u = new Float64Array(frames);
+    for (let i = 0; i < frames; i += 1) {
+      for (let j = -2; j <= 2; j += 1) {
+        const t = Math.max(0, i / TABLE_HZ + j * 0.1);
+        plan.rank(t, ranking);
+        plan.locate(ranking[0], t, leaderWhere);
+        s[i] += leaderWhere.s / 5;
+        u[i] += leaderWhere.u / 5;
+      }
+    }
+    const built = { s, u };
+    leaders.set(plan, built);
+    return built;
+  }
+
+  /* How far to the right of the middle of the frame a camera abeam of `c` has the point at (s, u), as an angle in radians, from the eye the rail has there looking where it looks. */
+  function rightOf(c, s, u) {
+    course.rail(c, probeEye);
+    course.place(c, 0, 1.4, probeAim);
+    course.place(s, u, 1.4, probeQuad);
+    const ax = probeAim.x - probeEye.x;
+    const ay = probeAim.y - probeEye.y;
+    const qx = probeQuad.x - probeEye.x;
+    const qy = probeQuad.y - probeEye.y;
+    return -Math.atan2(ax * qy - ay * qx, ax * qx + ay * qy);
+  }
+
+  /* What a camera has to be abeam of for the point at (s, u) to be `angle` to the right of the middle of its frame: the further back the camera, the further right the point. */
+  function abeamFor(s, u, angle) {
+    let lo = s - 30;
+    let hi = s + 12;
+    for (let i = 0; i < 18; i += 1) {
+      const mid = 0.5 * (lo + hi);
+      if (rightOf(mid, s, u) > angle) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    return 0.5 * (lo + hi);
+  }
 
   /*
    * Where the rail camera is abeam of, at every sixtieth of a second of a
-   * plan: the pack's position, less whatever the turn limit made it give
-   * back. It is worked out once per plan, from the plan alone, so the camera
-   * is still a function of the plan and the clock and nothing else: a seek, a
-   * pause and a replay all read the same table.
+   * plan: the place that has the leader where the rail holds it, less whatever
+   * the turn limit made it give back (the race rail starts early for that, see
+   * raceTargets). It is worked out once per plan and window shape, from the plan
+   * alone, so the camera is still a function of the plan and the clock and
+   * nothing else: a seek, a pause and a replay all read the same table.
    *
    * The calm rail is the same table with a slower turn limit and cuts: the
    * entry where a cut happens is marked, and a reader does not interpolate
@@ -392,10 +486,11 @@ export function makeShots({ course }) {
    */
   function railTable(plan, calm = false, aspect = 16 / 9) {
     const shape = Math.round(Math.min(2, Math.max(0.4, aspect)) * 4) / 4;
-    if (calm && !calmTables.has(shape)) {
-      calmTables.set(shape, new WeakMap());
+    const stores = calm ? calmTables : raceTables;
+    if (!stores.has(shape)) {
+      stores.set(shape, new WeakMap());
     }
-    const store = calm ? calmTables.get(shape) : tables;
+    const store = stores.get(shape);
     const known = store.get(plan);
     if (known) {
       return known;
@@ -408,21 +503,19 @@ export function makeShots({ course }) {
     const frames = Math.ceil(plan.duration * TABLE_HZ) + 2;
     const table = new Float64Array(frames);
     const cuts = new Uint8Array(frames);
+    const targets = calm ? calmTargets(plan, frames, stopS) : raceTargets(plan, shape, frames, stopS, maxYaw);
     let camera = 0;
     let before = 0;
     for (let i = 0; i < frames; i += 1) {
       const time = i / TABLE_HZ;
-      const open = 1 - jerk(time / 4);
-      const ahead = calm ? CALM_AHEAD : AHEAD_START + (AHEAD_RACE - AHEAD_START) * (1 - open);
-      const group = groupAt(plan, time) + ahead;
-      const target = calm ? stopAt(group, stopS, CALM_EASE) : softMin(group, stopS, 5);
+      const target = targets[i];
       if (i === 0) {
         camera = target;
       } else {
-        course.at(camera, here);
-        const curvature = Math.abs(here.kappa);
-        const limit = curvature > 1e-6 ? Math.min(MAX_SPEED, maxYaw / curvature) : MAX_SPEED;
         const wanted = (target - before) * TABLE_HZ + CATCH_UP * (target - camera);
+        /* The limit at both ends of the step: in a spiral the curvature is rising, and a step that is under the limit where it begins is over it where it ends. */
+        const reach = camera + Math.min(MAX_SPEED, Math.max(0, wanted)) / TABLE_HZ;
+        const limit = Math.min(speedLimit(camera, maxYaw), speedLimit(reach, maxYaw));
         camera += Math.max(0, Math.min(limit, wanted)) / TABLE_HZ;
         if (calm) {
           /*
@@ -460,6 +553,58 @@ export function makeShots({ course }) {
     const built = { table, cuts };
     store.set(plan, built);
     return built;
+  }
+
+  /* What the calm rail is to be abeam of: a little ahead of the group, easing to its stop. */
+  function calmTargets(plan, frames, stopS) {
+    const targets = new Float64Array(frames);
+    for (let i = 0; i < frames; i += 1) {
+      targets[i] = stopAt(groupAt(plan, i / TABLE_HZ) + CALM_AHEAD, stopS, CALM_EASE);
+    }
+    return targets;
+  }
+
+  /*
+   * What the race rail is to be abeam of, for a window of this shape: the
+   * point that has the leader RAIL_LEADER of the way from the middle of the
+   * frame to its right edge, in the lane it is in. At the start the leader is a
+   * smaller angle, while the lens is still closing from OPEN_FOV, and in the
+   * last stretch to the stop it is the finish frame's, a little left of the
+   * middle (see RAIL_LEADER). The window's frame is the race lens's, whatever
+   * the angle of the lens is at the start, which is a wider one.
+   */
+  function raceTargets(plan, shape, frames, stopS, maxYaw) {
+    const { s: leaderS, u: leaderU } = leaderTable(plan);
+    const lens = (fovFor(RAIL_FOV, shape, MIN_HORIZONTAL) * Math.PI) / 180;
+    const race = RAIL_LEADER * Math.atan(Math.tan(lens / 2) * shape);
+    const start = (RAIL_LEADER_START * Math.PI) / 180;
+    const finish = (RAIL_FINISH_BEARING * Math.PI) / 180;
+    const targets = new Float64Array(frames);
+    for (let i = 0; i < frames; i += 1) {
+      const open = 1 - jerk(i / TABLE_HZ / 4);
+      const held = start + (race - start) * (1 - open);
+      const run = jerk((stopS - leaderS[i] - RAIL_RUN_OUT) / (RAIL_RUN_IN - RAIL_RUN_OUT));
+      const angle = finish + (held - finish) * run;
+      targets[i] = softMin(abeamFor(leaderS[i], leaderU[i], angle), stopS, 5);
+    }
+    /*
+     * Never more than RAIL_LAG behind. Working back from the end, the camera
+     * has to be at least where it could still be RAIL_LAG short of every later
+     * target at the speed it may have, which in a bend is the turn limit and
+     * elsewhere is the pack's own speed and RAIL_RUN_AHEAD more. The target
+     * before it is the one it follows, so the rail is a little ahead of the
+     * leader's place before a bend that will hold it back, and on it after.
+     */
+    const wanted = Float64Array.from(targets);
+    let next = wanted[frames - 1] - RAIL_LAG;
+    for (let i = frames - 1; i >= 0; i -= 1) {
+      const pack = i + 1 < frames ? Math.max(0, (wanted[i + 1] - wanted[i]) * TABLE_HZ) : 0;
+      const quick = pack + RAIL_RUN_AHEAD;
+      const allowed = Math.min(quick, speedLimit(next, maxYaw), speedLimit(next - quick / TABLE_HZ, maxYaw));
+      next = Math.max(wanted[i] - RAIL_LAG, next - allowed / TABLE_HZ);
+      targets[i] = next + RAIL_LAG;
+    }
+    return targets;
   }
 
   /* The rail's position at a clock, between two entries of the table, and not across a cut. */
@@ -544,10 +689,11 @@ export function makeShots({ course }) {
   }
 
   /*
-   * The rail at race time t. It follows the leading group, with room ahead of
-   * the leader, no faster round a bend than the turn limit allows, and glides
-   * to a stop short of the finish line so the pack crosses a still frame.
-   * Everything is in the same unwrapped metres the plan's progress is in.
+   * The rail at race time t. It holds the leader toward the right hand edge of
+   * the frame, so the field that follows it is in view, no faster round a bend
+   * than the turn limit allows, and glides to a stop short of the finish line so
+   * the pack crosses a still frame. Everything is in the same unwrapped metres
+   * the plan's progress is in.
    */
   function rail(plan, t, out = {}, calm = false, aspect = 16 / 9) {
     const clock = Math.max(0, t);

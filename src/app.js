@@ -7,7 +7,7 @@
  *   sealed    the draw is made and written to the log, and its fingerprint
  *             is slapped on the glass
  *   lights    the aerial comes down to the rail, three amber, a hold, green
- *   race      the rail follows the leading group
+ *   race      the rail holds the leader toward the right hand edge of the frame
  *   finish    the winner has crossed; the rest are crossing
  *   results   the page that breaks the seal
  *
