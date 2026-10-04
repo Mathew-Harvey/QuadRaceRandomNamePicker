@@ -102,6 +102,11 @@ export function runSpec(spec) {
     laps: m.laps,
     leadsAtHalf: m.leadsAtHalf,
     finalThirdChanges: m.finalThirdChanges,
+    lead60: m.lead60,
+    top5at60: m.top5at60,
+    lead80: m.lead80,
+    top5at80: m.top5at80,
+    changesTo80: m.changesTo80,
     margin: m.margin,
   };
 }

@@ -13,21 +13,27 @@
  *
  * HOW A FLIGHT IS BUILT. Speed along the line is a launch that is the same
  * for every quad (they all have the same motors on the blocks, and get to 18
- * m/s in 1.5 s), a hand over, across the next three seconds, to the quad's
- * own cruise speed k, and then raised cosine bumps on top of k: a few small
- * ones on everybody, and a larger one or two on the leading few, which are
- * the storylines (a wire to wire win, a late surge, a comeback from a bad
- * start, an early leader who clips a flag, and a photo finish, which is only
- * a small margin). Every term integrates in closed form, and k is solved so
- * that the quad reaches the line exactly at its finishing time. The bumps are
- * smooth and kept inside the speed band, so the crossing order is the drawn
- * order by construction and the checks only confirm it. A story is a promise
- * about who is where (wire to wire has the winner clear at half way, any
- * other has somebody else first at half way, the winner at least 4 m behind
- * and the lead changing hands in the last third), it starts at about twice
- * the size of the ordinary variation, and is made bigger only as far as the
- * promise needs, because a leader 40 m clear of a field that has to be caught
- * by a rocket is legal and is not a race.
+ * m/s in 1.5 s), a hand over, across the next three seconds, to the pack's
+ * cruise speed, and then raised cosine bumps on top of it. Every quad flies
+ * the winner's own cruise, so nobody draws away, and the ordinary bumps come
+ * back to where they began, a push and then the same push the other way, so
+ * that the order inside the pack keeps changing and nobody has gone anywhere
+ * by the end of it. A larger bump or two on the leading few are the
+ * storylines (a wire to wire win, a late surge, a comeback from a bad start,
+ * an early leader who clips a flag, and a photo finish, which is only a small
+ * margin). What parts the field is a closing move late in the race, a speed
+ * added to the pack's and solved for each quad so that it reaches the line
+ * exactly at its finishing time: see THE PACK. Every term integrates in closed
+ * form. The bumps are smooth and kept inside the speed band, so the crossing
+ * order is the drawn order by construction and the checks only confirm it. A
+ * story is a promise about who is where (wire to wire has the winner clear at
+ * half way, any other has somebody else first at half way, the winner behind
+ * them, and the lead changing hands in the last third), it starts small, and
+ * is made bigger only as far as the promise needs, because a leader 40 m
+ * clear of a field that has to be caught by a rocket is legal and is not a
+ * race. The owner asked for the field to stay close for longer (2026-10-04),
+ * and that is why the margins in the promise are a metre and a half and not
+ * three and four.
  *
  * HOW THEY STAY APART. Distance along the line is only one of three numbers.
  * Across the track and up, quads fly in a lattice of slots (9 lanes by 4
@@ -76,7 +82,7 @@
  * <https://www.gnu.org/licenses/>.
  */
 
-import { cosPi, makeCourse, sinPi } from './course.js';
+import { GRID, cosPi, makeCourse, sinPi } from './course.js';
 
 export const STORYLINES = Object.freeze(['wire', 'surge', 'comeback', 'clip']);
 
@@ -122,6 +128,50 @@ const MAX_ATTEMPTS = 24;
 /* After this many attempts a story that cannot be kept for this seed is swapped for the sturdy one. A viewer is never told the name of a story, so a swap costs nothing and a story flown wrong costs the drama. */
 const SWITCH_AFTER = 14;
 const PI = Math.PI;
+
+/*
+ * THE PACK. The field is kept together for as long as it can be, and parted at
+ * the end, because who will win is only open while it is close. Every quad
+ * flies the winner's own cruise, with small bumps that come back to where they
+ * began, so the order keeps changing and nobody draws away. What parts them is
+ * a closing move, a speed added to the pack's and brought in over a few seconds
+ * from SEP of the winner's time, solved for each quad so that it reaches the
+ * line at its own finishing time: the winner needs none, and each place behind
+ * eases off by the amount it asks. A quad whose finishing time is too far from
+ * the winner's to be made that way inside the speed band begins its move
+ * earlier, and one that cannot be made at all by the earliest start has a
+ * cruise of its own: the back of a big field, which is out of the picture by
+ * then, drops away from the pack gradually and the front of it does not.
+ *
+ * The pack flies the winner's cruise and not the middle of the leading ten's
+ * because of what the camera does at the line. The lens that holds the winner
+ * in a narrow frame has to change as fast as the winner crosses it, so the
+ * winner's speed at the line is the speed it follows. With the middle of the
+ * leading ten as the cruise the winner pulled away instead, and crossed the
+ * line at 24.6 m/s (median of 160 plans) where the field that was let spread
+ * crossed at 21.9: on a phone held upright 35 of 101 clear wins then had a lens
+ * that changed faster than 290 degrees a second, against none. At the winner's
+ * own cruise it crosses at 22.0 and the field parts in the same way, because
+ * only the speeds relative to each other are seen.
+ */
+const PACK = Object.freeze({
+  /* When the closing move begins, as a fraction of the winner's time, or this long before it ends if that is later: a long race is not parted any earlier for being long. */
+  sep: 0.72,
+  final: 9,
+  /* How long it takes to come on, as a fraction of the winner's time, and the least and most it is in seconds. */
+  width: 0.12,
+  widthMin: 2,
+  widthMax: 4,
+  /* The earliest it may begin, which is after the launch has handed over. */
+  from: 3,
+  /* How much of the speed band a closing move may use: the part of the way from the pack's cruise to the edge of the band. */
+  up: 0.8,
+  down: 0.8,
+  /* How much of the grid's depth is closed up in the first seconds: row r is 2.4 r metres behind the front row, and gains this share of it. */
+  closeUp: 0.4,
+  /* How big a storyline's bumps start, as a share of what they were when the field was let spread. */
+  story: 0.4,
+});
 
 /* ------------------------------------------------------------------ */
 /* Arithmetic that is the same everywhere                              */
@@ -265,6 +315,13 @@ class Curve {
     this.finish = finish;
     this.bumps = [];
     this.k = 20;
+    /* The closing move: a speed added to the cruise, `d` of it, brought in over `width` seconds from `from`. None until a pack has set one. */
+    this.d = 0;
+    this.from = 0;
+    this.width = 3;
+    /* The pack's cruise, and when the move begins by preference, once there is a pack. Null for a quad that flies alone. */
+    this.pack = null;
+    this.sep = 0;
   }
 
   add(t0, w, amp) {
@@ -287,13 +344,51 @@ class Curve {
     return p;
   }
 
-  solve(line) {
+  /* The cruise that takes the quad to the line at its finishing time on its own, with no closing move. */
+  solveAlone(line) {
+    this.d = 0;
     this.k = (line - this.s0 - this.base(this.finish)) / this.area(this.finish);
     return this.k;
   }
 
+  /*
+   * The pack's cruise and a closing move for this quad's finishing time. The
+   * quad is `need` metres short of the line at its time if it flies the pack's
+   * cruise (or that far over it, if need is negative), and the move makes that
+   * up. It begins at its preferred time if the speed it needs for that is
+   * inside the allowance, earlier if it is not, as early as it takes; and if
+   * the earliest start is not enough the move is as big as is allowed and the
+   * quad's cruise makes up the rest.
+   */
+  close(line) {
+    const K = this.pack;
+    const F = this.finish;
+    const w = this.width;
+    this.k = K;
+    const need = line - this.s0 - this.base(F) - K * this.area(F);
+    const cap = need >= 0 ? PACK.up * (LINE_BAND.max - K) : PACK.down * (K - LINE_BAND.min);
+    this.from = this.sep;
+    this.d = need / rampPos(F, this.from, w);
+    if (Math.abs(this.d) <= cap) {
+      return this.k;
+    }
+    this.d = need >= 0 ? cap : -cap;
+    this.from = F - w / 2 - need / this.d;
+    if (this.from >= PACK.from) {
+      return this.k;
+    }
+    this.from = PACK.from;
+    this.k = (line - this.s0 - this.base(F) - this.d * rampPos(F, this.from, w)) / this.area(F);
+    return this.k;
+  }
+
+  /* Whatever the quad's way of getting there is. */
+  solve(line) {
+    return this.pack === null ? this.solveAlone(line) : this.close(line);
+  }
+
   s(t) {
-    return this.s0 + this.base(t) + this.k * this.area(t);
+    return this.s0 + this.base(t) + this.k * this.area(t) + this.d * rampPos(t, this.from, this.width);
   }
 
   v(t) {
@@ -301,7 +396,7 @@ class Curve {
     for (const b of this.bumps) {
       q += b.A * bumpVel(b, t);
     }
-    return LAUNCH_SPEED * (rampVel(t, 0, LAUNCH) - rampVel(t, LAUNCH, BLEND)) + this.k * q;
+    return LAUNCH_SPEED * (rampVel(t, 0, LAUNCH) - rampVel(t, LAUNCH, BLEND)) + this.k * q + this.d * rampVel(t, this.from, this.width);
   }
 
   a(t) {
@@ -309,7 +404,7 @@ class Curve {
     for (const b of this.bumps) {
       q += b.A * bumpAcc(b, t);
     }
-    return LAUNCH_SPEED * (rampAcc(t, 0, LAUNCH) - rampAcc(t, LAUNCH, BLEND)) + this.k * q;
+    return LAUNCH_SPEED * (rampAcc(t, 0, LAUNCH) - rampAcc(t, LAUNCH, BLEND)) + this.k * q + this.d * rampAcc(t, this.from, this.width);
   }
 }
 
@@ -333,7 +428,7 @@ function finishingTimes(order, length, rng, photo) {
   gaps.push(photo ? rng.range(GAP_FIRST, 0.22) : 0.3 * (1.6 / 0.3) ** rng.float());
   for (let p = 1; p < n - 1; p += 1) {
     const top = p <= 5;
-    gaps.push(GAP_OTHER + (top ? rng.range(0, 0.34) : rng.range(0, 0.13)));
+    gaps.push(GAP_OTHER + (top ? rng.range(0, 0.18) : rng.range(0, 0.13)));
   }
   const minimum = gaps.length ? gaps[0] + (n - 2) * GAP_OTHER : 0;
   const extra = gaps.slice(1).reduce((sum, g) => sum + (g - GAP_OTHER), 0);
@@ -423,12 +518,15 @@ function halfState(curves, line, limit, winner) {
 
 /*
  * A storyline's promise. Wire to wire has the winner first at half way by at
- * least 3 m, which is a lead and not a hair. Every other story has somebody
- * else first at half way with the winner at least 4 m behind, and the lead
- * changing hands between two thirds of the distance and the line.
+ * least LEAD, which is a lead and not a hair. Every other story has somebody
+ * else first at half way with the winner at least TRAIL behind, and the lead
+ * changing hands between two thirds of the distance and the line. They were 3
+ * m and 4 m while the field was let spread; in a pack that stays within a few
+ * metres of itself until late, 3 m is a runaway, and 1.5 m is still a gap a
+ * viewer can see and a quad's length.
  */
-const LEAD = 3;
-const TRAIL = 4;
+const LEAD = 1.5;
+const TRAIL = 1.5;
 /* No bump a repair makes is bigger than the speed band can hold: about +30 per cent of a 22 m/s cruise up, and about -27 per cent down. */
 const CAP_UP = 0.3;
 const CAP_DOWN = -0.27;
@@ -475,6 +573,28 @@ function finalThirdChanges(curves, line, winnerFinish) {
 }
 
 /*
+ * Give every quad its cruise and its closing move. The winner is solved alone
+ * first, which says what cruise takes it to the line at its time, with its
+ * bumps; that is the pack's cruise; and then every quad is brought to it and
+ * given the move that makes up the difference. It is called again whenever a
+ * bump is changed, because every bump changes the distance a quad has covered
+ * and so the move it needs.
+ */
+function settle(curves, order, line, scale) {
+  const winner = curves[order[0]];
+  winner.pack = null;
+  const cruise = winner.solveAlone(line);
+  const width = Math.min(PACK.widthMax, Math.max(PACK.widthMin, PACK.width * scale));
+  for (const c of curves) {
+    c.pack = cruise;
+    c.sep = Math.max(PACK.sep * scale, scale - PACK.final);
+    c.width = width;
+    c.close(line);
+  }
+  return curves.every((c) => c.k > 0 && Number.isFinite(c.k) && Number.isFinite(c.d) && c.from < c.finish);
+}
+
+/*
  * Give the leading few their storyline and everybody a little variation, then
  * check the storyline did what it says, and push it harder, a few times, if
  * it did not. A storyline is a promise about who is where, and a promise that
@@ -483,7 +603,7 @@ function finalThirdChanges(curves, line, winnerFinish) {
  * story has somebody else first at half way and the lead changing hands in the
  * last third.
  */
-function dress(curves, order, finish, line, story, rng) {
+function dress(curves, order, finish, line, story, rng, grid) {
   const n = order.length;
   const winner = order[0];
   const scale = finish[winner];
@@ -492,15 +612,46 @@ function dress(curves, order, finish, line, story, rng) {
   const R = curves[rival];
   const wobble = [];
 
+  /*
+   * Everybody gets a little variation, and it comes back: a push and then the
+   * same push the other way, so that a quad is a few metres ahead of where it
+   * was and then is where it was. The pack breathes, and the order in it keeps
+   * changing, and nobody has gone anywhere by the end of it. A bump that does
+   * not come back (which is what this used to be) is a quad that has drawn
+   * away from the rest, and the field is spread by it.
+   */
+  const pairs = Math.max(1, Math.round(scale / 12));
   for (const c of curves) {
-    const count = 1 + rng.int(3);
+    const count = pairs + rng.int(2);
     for (let m = 0; m < count; m += 1) {
-      c.add(rng.range(0.2, 0.95) * scale, rng.range(0.06, 0.14) * scale, rng.range(-0.1, 0.1));
+      /* A second or two wide whatever the length of the race, so that a push is the same few metres in a long one. */
+      const w = rng.range(1.2, 2.1);
+      const t0 = rng.range(0.28 * scale + w, 0.85 * scale - 3 * w);
+      const amp = rng.range(0.04, 0.1) * (rng.chance(0.5) ? 1 : -1);
+      c.add(t0, w, amp);
+      c.add(t0 + 2 * w, w, -amp);
     }
   }
 
+  /*
+   * The grid is closed up. It is six rows 2.4 m apart for fifty, and the back
+   * row has a dozen metres to find before it is in the race at all: so each row
+   * gains a share of the distance to the row in front of it, over the three
+   * seconds after the launch has handed over, and the field is a block that
+   * flies together and not a column.
+   */
+  const cruise = line / scale;
+  const closing = Math.min(3, Math.max(1.5, 0.1 * scale));
+  grid.forEach((cell, i) => {
+    if (cell.row > 0) {
+      curves[i].add(0, closing, (PACK.closeUp * GRID.rowPitch * cell.row) / (cruise * closing));
+    }
+  });
+
+  /* A story bump is as wide as it would be in a thirty second race, so that it moves a quad by the same few metres in a long one. */
+  const reach = Math.min(scale, 30);
   const part = (curve, centre, width, amp) => {
-    curve.add(centre * scale, width * scale, amp);
+    curve.add(centre * scale, width * reach, amp * PACK.story);
     return curve.bumps[curve.bumps.length - 1];
   };
 
@@ -532,12 +683,7 @@ function dress(curves, order, finish, line, story, rng) {
     push = part(W, 0.8, 0.15, 0.14);
   }
 
-  const solveAll = () => {
-    for (const c of curves) {
-      c.solve(line);
-    }
-    return curves.every((c) => c.k > 0 && Number.isFinite(c.k));
-  };
+  const solveAll = () => settle(curves, order, line, scale);
   if (!solveAll()) {
     return null;
   }
@@ -641,7 +787,7 @@ function buildCurves(order, length, laps, course, rng, force) {
   const { photo, story } = force;
   const finish = finishingTimes(order, length, rng, photo);
   const curves = grid.map((cell, i) => new Curve(cell.s0, finish[i]));
-  const dressed = force.plain ? { rival: order[Math.min(1, n - 1)], wobble: [] } : dress(curves, order, finish, line, story, rng);
+  const dressed = force.plain ? { rival: order[Math.min(1, n - 1)], wobble: [] } : dress(curves, order, finish, line, story, rng, grid);
   if (!dressed) {
     return null;
   }
@@ -1435,6 +1581,7 @@ export function measure(plan, options = {}) {
   }
 
   const drama = dramaOf(plan, crossing[order[0]]);
+  const close = closenessOf(plan);
   return {
     crossing,
     orderOk,
@@ -1449,6 +1596,7 @@ export function measure(plan, options = {}) {
     winnerRatio: crossing[order[0]] / plan.length,
     laps: line / course.lap,
     ...drama,
+    ...close,
     margin: n > 1 ? crossing[order[1]] - crossing[order[0]] : 0,
   };
 }
@@ -1467,6 +1615,44 @@ export function dramaOf(plan, winnerTime = plan.finish[plan.order[0]]) {
     leadsAtHalf: halfLeader(curves, line, limit) === winner,
     finalThirdChanges: finalThirdChanges(curves, line, winnerTime),
     margin: plan.count > 1 ? plan.finish[order[1]] - plan.finish[winner] : 0,
+  };
+}
+
+/*
+ * How close the field is, from the curves alone, which is what "closer for
+ * longer" is made of: at 60 and at 80 per cent of the winner's time, how far
+ * the leader is ahead of the quad in second place and of the one in fifth (in
+ * metres along the line, whoever they are), and how many times the lead has
+ * changed hands before 80 per cent of it, counted from the end of the launch's
+ * hand over, when the field has stopped being a grid. A field of fewer than
+ * five has its last quad in place of the fifth.
+ */
+export function closenessOf(plan) {
+  const { count: n, curves } = plan;
+  const T = plan.finish[plan.order[0]];
+  const s = new Float64Array(n);
+  const fifth = Math.min(4, n - 1);
+  const at = (fraction) => {
+    for (let i = 0; i < n; i += 1) {
+      s[i] = curves[i].s(fraction * T);
+    }
+    const sorted = Array.from(s).sort((a, b) => b - a);
+    return { lead: sorted[0] - sorted[1], top5: sorted[0] - sorted[fifth] };
+  };
+  const sixty = at(0.6);
+  const eighty = at(0.8);
+  const here = {};
+  let last = leaderAt(curves, LAUNCH + BLEND, here).index;
+  let changes = 0;
+  for (let t = LAUNCH + BLEND + 0.02; t <= 0.8 * T; t += 0.02) {
+    const now = leaderAt(curves, t, here).index;
+    if (now !== last) {
+      changes += 1;
+      last = now;
+    }
+  }
+  return {
+    lead60: sixty.lead, top5at60: sixty.top5, lead80: eighty.lead, top5at80: eighty.top5, changesTo80: changes,
   };
 }
 

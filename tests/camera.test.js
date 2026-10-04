@@ -367,10 +367,28 @@ function share(view, point, aspect) {
   return Math.max(Math.abs(bearing) / (horizontal / 2), Math.abs(elevation) / (vertical / 2));
 }
 
-/* Plans for the zoom: the first close finish and the first clear win from a fixed list of labels, which a search makes every run the same. */
+/*
+ * Plans for the zoom, from a fixed list of labels, which a search makes every
+ * run the same: the first close finish, the first clear win, and the first
+ * clear win whose winner flies in the middle lane at the lowest level, which is
+ * the aim's own spot (the aim is the line, 1.4 m up, and the lowest level is
+ * 1.3 m). The third is there because "the winner is near the middle of the
+ * frame" is a claim about a winner that is near the middle of the track: a
+ * winner in another lane, or on the top level, 3.1 m up, is as far from the aim
+ * as the plan put it, and the fit is only held to PHOTO_FIT of the way to the
+ * edge for them. The first clear win used to serve for both, because it was a
+ * plan whose winner happened to fly at the aim's height: at the line, 19 of 53
+ * clear wins of the plans made before the pack were under 0.35 of the way to
+ * the edge, and 24 of 58 of the pack's are.
+ */
+let plansForZoom = null;
 function finishPlans() {
-  const found = { close: null, clear: null };
-  for (let k = 0; k < 80 && !(found.close && found.clear); k += 1) {
+  if (plansForZoom) {
+    return plansForZoom;
+  }
+  const found = { close: null, clear: null, centred: null };
+  const where = {};
+  for (let k = 0; k < 600 && !(found.close && found.clear && found.centred); k += 1) {
     const label = `webfpv-picker/test/photo/${k}`;
     const plan = makePlan({
       order: orderFor(12, label), showSeed: Buffer.from(label).toString('hex').padEnd(64, '0').slice(0, 64), length: 30,
@@ -379,11 +397,18 @@ function finishPlans() {
     if (!found.close && gap < 0.1) {
       found.close = { plan, gap };
     }
-    if (!found.clear && gap > 0.6) {
-      found.clear = { plan, gap };
+    if (gap > 0.6) {
+      plan.pose(plan.order[0], plan.finish[plan.order[0]], where);
+      if (!found.clear) {
+        found.clear = { plan, gap };
+      }
+      if (!found.centred && Math.abs(where.u) < 0.1 && Math.abs(where.h - 1.4) < 0.5) {
+        found.centred = { plan, gap };
+      }
     }
   }
-  assert.ok(found.close && found.clear, 'eighty labels have a close finish and a clear win in them');
+  assert.ok(found.close && found.clear && found.centred, 'six hundred labels have a close finish, a clear win, and a clear win by a winner in the middle of the track');
+  plansForZoom = found;
   return found;
 }
 
@@ -404,13 +429,13 @@ function lensThrough(plan, aspect, from, to, step = 1 / 120) {
 }
 
 test('every finish zooms: a photo finish on the first two quads, a clear win on the winner alone, and never past the fit', () => {
-  const { close, clear } = finishPlans();
+  const { close, clear, centred } = finishPlans();
   const view = {};
   const first = {};
   const second = {};
   let narrowest = Infinity;
   let zoomedClear = 0;
-  for (const { plan } of [...PLANS, close, clear]) {
+  for (const { plan } of [...PLANS, close, clear, centred]) {
     const a = plan.finish[plan.order[0]];
     const b = plan.finish[plan.order[1]];
     const photo = b - a < PHOTO_CLOSE;
@@ -458,8 +483,13 @@ test('every finish zooms: a photo finish on the first two quads, a clear win on 
   assert.ok(view.fov <= RAIL_FOV - 8, `a clear win is ${view.fov} degrees at the line`);
   clear.plan.pose(clear.plan.order[1], c, second);
   assert.ok(share(view, second, 16 / 9) > 1, 'and the runner up, 0.6 s or more behind, is outside the frame: the lens is on the winner alone');
-  clear.plan.pose(clear.plan.order[0], c, first);
-  assert.ok(share(view, first, 16 / 9) < 0.35, `with the winner near the middle of it, ${share(view, first, 16 / 9)}`);
+  /* The winner of the third plan flies at the aim's own spot, and the lens that is on the winner alone keeps it near the middle of the frame. */
+  const m = centred.plan.finish[centred.plan.order[0]];
+  shots.rail(centred.plan, m, view);
+  centred.plan.pose(centred.plan.order[0], m, first);
+  assert.ok(share(view, first, 16 / 9) < 0.35, `with the winner near the middle of the track, ${share(view, first, 16 / 9)} of the way to the edge`);
+  centred.plan.pose(centred.plan.order[1], m, second);
+  assert.ok(share(view, second, 16 / 9) > 1, 'and the runner up of that plan is outside the frame too');
 
   /* The calm rail keeps its own lens whatever happens. */
   for (const t of [a - 0.5, a - 0.1, a, a + 0.2, c - 0.2, c]) {

@@ -291,6 +291,26 @@ export function makeShots({ course }) {
   /* The soft minimum of two numbers: the lower, rounded off over about `k` metres, so a stop is a glide. */
   const softMin = (a, b, k) => 0.5 * (a + b - Math.sqrt((a - b) * (a - b) + k * k));
 
+  /*
+   * A stop that arrives: `a` until it is half `length` short of `b`, then an
+   * ease on a raised cosine, and `b` itself once `a` is half `length` past it.
+   * A soft minimum never gets to `b`, it stays short of it by k^2 / (4 (a - b)),
+   * which is a metre for the rail's k of 5 as the pack crosses the line, and
+   * that metre is the difference between the parked camera being 6 m from the
+   * line and 7 (see CALM_EASE).
+   */
+  const stopAt = (a, b, length) => {
+    const a0 = b - length / 2;
+    if (a <= a0) {
+      return a;
+    }
+    if (a >= b + length / 2) {
+      return b;
+    }
+    const x = (a - a0) / length;
+    return a0 + length * (x * 0.5 + sinPi(x) / (2 * Math.PI));
+  };
+
   /* The soft absolute value: never below the real one, and smooth through zero. */
   const softAbs = (x) => Math.sqrt(x * x + 0.012 * 0.012);
 
@@ -309,6 +329,24 @@ export function makeShots({ course }) {
 
   /* Where the rail stops, short of the line: the gantry's near upright stands at the line, and a camera abeam of it would film every finish through a post. */
   const STOP_SHORT = 6;
+  /*
+   * How long the calm rail's stop is, in metres of the pack's travel: it eases
+   * to the stop over this, and is on it once the pack is half of it past. The
+   * calm rail cannot turn to the line as the race rail does (that is a glide),
+   * so the leader in the lane nearest the rail crosses the line 6 m ahead of a
+   * camera that is abeam of the stop, which is 22 degrees from the middle of a
+   * phone's frame, and the frame is 25 to its edge, if the camera is on the
+   * stop. The soft stop it had left the camera a metre or two short of it, and
+   * the leader crossed the line at 26 to 29 degrees, out of the frame for the
+   * last few frames before the line, in about one calm race in twelve on a
+   * phone (9 of 126 plans for the generator of the pack, 11 for the one before
+   * it). The same lane put the leader out of the frame in the middle of a race
+   * now and then, because the cut that is there to prevent it measured the
+   * leader at the middle of the track and not in its lane. With both put right
+   * the leader is in the frame in all of 126 plans, in both shapes of window,
+   * for an ease of 6 and of 10 m, and 14 loses one frame.
+   */
+  const CALM_EASE = 10;
   /*
    * The most the rail camera turns, in radians a second: 44 degrees, a little
    * under the brief's 50. In a bend a camera that stays abeam of the pack
@@ -339,6 +377,7 @@ export function makeShots({ course }) {
   const calmEye = {};
   const calmAim = {};
   const calmLeader = {};
+  const calmWhere = {};
 
   /*
    * Where the rail camera is abeam of, at every sixtieth of a second of a
@@ -375,7 +414,8 @@ export function makeShots({ course }) {
       const time = i / TABLE_HZ;
       const open = 1 - jerk(time / 4);
       const ahead = calm ? CALM_AHEAD : AHEAD_START + (AHEAD_RACE - AHEAD_START) * (1 - open);
-      const target = softMin(groupAt(plan, time) + ahead, stopS, 5);
+      const group = groupAt(plan, time) + ahead;
+      const target = calm ? stopAt(group, stopS, CALM_EASE) : softMin(group, stopS, 5);
       if (i === 0) {
         camera = target;
       } else {
@@ -385,12 +425,25 @@ export function makeShots({ course }) {
         const wanted = (target - before) * TABLE_HZ + CATCH_UP * (target - camera);
         camera += Math.max(0, Math.min(limit, wanted)) / TABLE_HZ;
         if (calm) {
-          /* Where the leader is in the frame this camera has: if it is nearly out of it, cut. */
+          /*
+           * The table leads its target by a step's travel while it moves, which
+           * the soft stop hid under its own undershoot; the stop that arrives
+           * shows it as up to a quarter of a metre past the stop, so the camera
+           * is held to it.
+           */
+          camera = Math.min(camera, stopS);
+          /*
+           * Where the leader is in the frame this camera has: if it is nearly
+           * out of it, cut. The leader is measured in its own lane, which the
+           * plan knows: at the middle of the track a leader in the lane nearest
+           * the rail, 5 m nearer, is a third further round than it looked, and
+           * the cut came after it had left the frame.
+           */
           plan.rank(time, ranking);
-          const lead = plan.curves[ranking[0]].s(time);
+          plan.locate(ranking[0], time, calmWhere);
           course.rail(camera, calmEye);
           course.place(camera, 0, 1.4, calmAim);
-          course.place(lead, 0, 1.4, calmLeader);
+          course.place(calmWhere.s, calmWhere.u, 1.4, calmLeader);
           const yaw = Math.atan2(calmAim.y - calmEye.y, calmAim.x - calmEye.x);
           const bearing = Math.atan2(calmLeader.y - calmEye.y, calmLeader.x - calmEye.x) - yaw;
           const wrapped = Math.atan2(Math.sin(bearing), Math.cos(bearing));

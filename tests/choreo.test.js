@@ -346,6 +346,41 @@ test('check 8: the drama targets, over every plan of five names or more, printed
   assert.ok(close >= 0.25 && close <= 0.5, `winning margin under 0.25 s in ${pct(close)}`);
 });
 
+/*
+ * 8b. The field stays together. The owner's words, 2026-10-04: "keep the field
+ * closer for longer so we are on the edge of our seats as to who will win for
+ * longer". Before the pack was made the quads were let spread from the start,
+ * and by 80 per cent of the winner's time the leading five were 16 m apart at
+ * the median (9 m at the 10th percentile of plans, 28 at the 90th) and the lead
+ * had changed hands twice. The thresholds below sit between that and the pack's
+ * (3.5 m, 1.8 and 8.2, four changes), each on the far side of the old
+ * generator's 10th percentile from where the pack's 90th is, so a race that
+ * spreads again fails them and a plan sample cannot decide it. They are for
+ * the distribution over the plans and not for any one race: a race with a
+ * runaway leader is a legal one, and the storylines make some.
+ */
+const quantile = (values, p) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(p * (sorted.length - 1)))];
+};
+
+test('check 8b: the leading five are within a few metres of each other until late, and the lead keeps changing', async (t) => {
+  const rows = (await allPlans()).filter((r) => r.n >= 5);
+  const column = (pick) => rows.map(pick);
+  const show = (label, values) => t.diagnostic(`  ${label.padEnd(40)} 10th ${quantile(values, 0.1).toFixed(1).padStart(5)}  median ${quantile(values, 0.5).toFixed(1).padStart(5)}  90th ${quantile(values, 0.9).toFixed(1).padStart(5)}  most ${Math.max(...values).toFixed(1).padStart(5)}`);
+  t.diagnostic(`over ${rows.length} plans of N >= 5, in metres along the line:`);
+  show('first over fifth, at 60% of the winner', column((r) => r.top5at60));
+  show('first over fifth, at 80% of the winner', column((r) => r.top5at80));
+  show('first over second, at 80% of the winner', column((r) => r.lead80));
+  show('lead changes before 80% of the winner', column((r) => r.changesTo80));
+  assert.ok(quantile(column((r) => r.top5at60), 0.5) <= 8, 'the median plan has its leading five within 8 m at 60 per cent of the winner\'s time');
+  assert.ok(quantile(column((r) => r.top5at60), 0.9) <= 14, 'and nine in ten within 14 m');
+  assert.ok(quantile(column((r) => r.top5at80), 0.5) <= 6, 'the median plan has its leading five within 6 m at 80 per cent');
+  assert.ok(quantile(column((r) => r.top5at80), 0.9) <= 12, 'and nine in ten within 12 m');
+  assert.ok(quantile(column((r) => r.lead80), 0.5) <= 3, 'the leader is no more than 3 m clear of second place at 80 per cent, in the median plan');
+  assert.ok(quantile(column((r) => r.changesTo80), 0.5) >= 3, 'and the lead has changed hands three times by then, in the median plan');
+});
+
 /* ------------------------------------------------------------------ */
 /* Every storyline, forced                                             */
 /* ------------------------------------------------------------------ */
