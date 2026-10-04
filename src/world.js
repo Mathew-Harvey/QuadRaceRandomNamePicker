@@ -249,7 +249,7 @@ export async function buildWorld({
     camera.position.copy(eye);
     camera.up.set(0, 1, 0);
     camera.lookAt(target);
-    const fov = offset && offset.fov ? offset.fov : fovFor(view.fov, camera.aspect);
+    const fov = offset && offset.fov ? offset.fov : fovFor(view.fov, camera.aspect, view.minH);
     if (Math.abs(camera.fov - fov) > 0.01) {
       camera.fov = fov;
       camera.updateProjectionMatrix();

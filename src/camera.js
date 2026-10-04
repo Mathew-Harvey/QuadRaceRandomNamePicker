@@ -22,6 +22,7 @@
  *              It glides to a stop short of the line, turning to look at the
  *              line as it stops, so the pack crosses a still frame with the
  *              line in the middle of it and room after the line for the flip.
+ *              In a photo finish the lens narrows on the first two quads.
  *   held       the rail's frame where it stops, as a fixed shot.
  *   hero       the winner, close, a moment after the line, for the results
  *              page's big panel.
@@ -57,8 +58,21 @@
 
 import { GRID, cosPi, sinPi } from './course.js';
 
-/* The rail's lens: tight enough that the leading quads are 40 pixels across at 1080 lines, wider at the start. */
-export const RAIL_FOV = 34;
+/*
+ * The rail's lens: tight enough that the leading quads are about 80 pixels
+ * across at 1080 lines (the brief asked for 40, and at 48 a person watching
+ * found them hard to follow), wider at the start, where the grid and the pack
+ * are both in the picture. The quads are drawn 2.2 times life size, which
+ * src/layout.js says is as far as they can go, so the rest of the size is the
+ * lens: 26 degrees, with the camera aiming 3 m ahead of the pack and not 4.5,
+ * so the leader sits nearer the middle of a narrower frame. The leader is in
+ * frame with 4.8 degrees to spare on a wide window and 4.5 on a phone held
+ * upright, at the least, which is in a photo finish, where the zoom holds the
+ * first two at 80 per cent of the way to the edge. A lens narrower than this
+ * is held back by MIN_HORIZONTAL, which is 25.6 degrees high on a 16 by 9
+ * window.
+ */
+export const RAIL_FOV = 26;
 export const OPEN_FOV = 46;
 export const AERIAL_FOV = 54;
 
@@ -87,15 +101,50 @@ export const FIRST_LAMP_K = 0.385;
  * where it has parked has the line at the right hand edge of its frame and
  * loses the winner between 0.1 and 0.35 s after the line, measured over
  * nine plans, in a flip that takes 0.9 s: nobody saw it until the results
- * page. So as the eye comes in to its stop the lens turns to look AT the line
- * and widens by FINISH_WIDEN degrees, in one eased ramp over the last
- * FINISH_EASE metres of the eye's run. At the stop the line is in the middle of
- * the frame, the last 11 m of the approach are in it, and so are the first 16 m
- * after the line, which is most of the flip. The calm rail does none of it: it
- * is wide already, and a turn of the lens is a glide.
+ * page. So as the eye comes in to its stop the lens turns to look AT the line,
+ * in one eased ramp over the last FINISH_EASE metres of the eye's run. The
+ * calm rail does none of it: it is wide already, and a turn of the lens is a
+ * glide.
+ *
+ * Once the winner has crossed, the lens opens to FINISH_FOV over FINISH_OPEN
+ * seconds, so that the flip, which takes the winner 20 m past the line, stays
+ * in the frame. Before that it is the race lens, and the line is in the middle
+ * of the frame with the last 9 m of the approach in it.
+ *
+ * THE PHOTO FINISH. 44 per cent of the races this makes have first and second
+ * under a quarter of a second apart, and at the race lens they are two dots
+ * either side of a line. So the lens narrows, and only as far as it can while
+ * the first two quads and the line stay inside the frame, with every one of
+ * them no further out than PHOTO_FIT of the way to its edge. How tight that
+ * is comes from where the two are, not from a rule about gaps: with a
+ * tenth of a second between them it goes down to PHOTO_FOV, with a clear win
+ * the second is far behind, the lens would have to be wider than the race
+ * lens to hold it, and nothing narrows at all. It is a pure function of the
+ * plan and the clock, smooth by construction (a soft maximum and a soft
+ * absolute value, never a filter that remembers), and it opens again as the
+ * pair fly off past the line.
  */
 export const FINISH_EASE = 30;
-export const FINISH_WIDEN = 4;
+export const FINISH_FOV = 40;
+export const FINISH_OPEN = 0.4;
+export const PHOTO_FOV = 14;
+export const PHOTO_FIT = 0.8;
+/*
+ * The window's minimum horizontal field in two other places. The finish frame
+ * goes back to the 50 degrees a phone held upright had before the race lens
+ * was brought in, because the winner's flip needs the room, and the calm rail
+ * never left it. The race rail works its own minimum out, for the window it is
+ * asked about, and hands back the lens that results (see rail), because a zoom
+ * on a narrow window is a zoom from the lens that window is given, and not
+ * from the 26 degrees that would be 15 across on a phone.
+ */
+export const FINISH_MIN_HORIZONTAL = 50;
+export const CALM_MIN_HORIZONTAL = 50;
+/* Half the span of a quad at the scale src/layout.js draws it, in metres (0.347 m across its props, times 2.2, halved, and a hair over). */
+export const QUAD_HALF = 0.4;
+/* Seconds before the winner crosses and after the second does that the fit is worked out in: outside them the pair are too far from the line to matter. */
+const FIT_BEFORE = 1.5;
+const FIT_AFTER = 1.5;
 
 /*
  * The winner's picture: 2.4 m off and a little below, looking up, 30 degrees
@@ -119,12 +168,21 @@ const jerk = (t) => {
 };
 
 /*
- * A vertical field of view that keeps the horizontal one from going below
- * `minHorizontal` degrees on a narrow window, which is a phone held upright:
- * the lens is chosen for a 16 by 9 frame, and on a 9 by 16 one it would show
- * seven metres of track.
+ * The narrowest horizontal field a window gets, in degrees, unless a shot
+ * says otherwise (the photo finish and the finish frame do). The race lens is
+ * 26 degrees high, which is 44.7 across on a 16 by 9 window, so a window as
+ * wide as that is not touched; it is for a narrow one, a phone held upright,
+ * where the lens chosen for a wide frame would show seven metres of track.
+ * It was 50, and 44 is what the race lens needs to stay as it is on a 16 by 9
+ * window; a phone upright keeps the leader in frame with 4.5 degrees to spare.
  */
-export function fovFor(vertical, aspect, minHorizontal = 50) {
+export const MIN_HORIZONTAL = 44;
+
+/*
+ * A vertical field of view that keeps the horizontal one from going below
+ * `minHorizontal` degrees on a narrow window, which is a phone held upright.
+ */
+export function fovFor(vertical, aspect, minHorizontal = MIN_HORIZONTAL) {
   const h = (Math.PI / 180) * minHorizontal;
   const v = 2 * Math.atan(Math.tan(h / 2) / Math.max(aspect, 0.2));
   return Math.max(vertical, (v * 180) / Math.PI);
@@ -137,8 +195,8 @@ export function makeShots({ course }) {
   /* How many rows a grid of n has. */
   const rowsOf = (n) => Math.max(1, Math.ceil(n / GRID.columns));
 
-  /* A point of the cross section, written into out as a look at. */
-  const lookAt = (out, from, to, fov) => {
+  /* A point of the cross section, written into out as a look at. `minH` is the narrowest horizontal field the window may be given: the frame's, unless the shot knows better. */
+  const lookAt = (out, from, to, fov, minH = MIN_HORIZONTAL) => {
     out.x = from.x;
     out.y = from.y;
     out.z = from.z;
@@ -146,11 +204,14 @@ export function makeShots({ course }) {
     out.ty = to.y;
     out.tz = to.z;
     out.fov = fov;
+    out.minH = minH;
     return out;
   };
 
   const eye = {};
   const aim = {};
+  const fitPose = {};
+  const needs = new Float64Array(4);
 
   /* The grid's own middle, so the orbit frames the quads and not the field. */
   function paddock(t, n, out = {}) {
@@ -204,6 +265,22 @@ export function makeShots({ course }) {
   /* The soft minimum of two numbers: the lower, rounded off over about `k` metres, so a stop is a glide. */
   const softMin = (a, b, k) => 0.5 * (a + b - Math.sqrt((a - b) * (a - b) + k * k));
 
+  /* The soft absolute value: never below the real one, and smooth through zero. */
+  const softAbs = (x) => Math.sqrt(x * x + 0.012 * 0.012);
+
+  /* The soft maximum of the first n values: never below the real maximum, and over it by at most k ln n. */
+  function softMax(values, n, k) {
+    let top = -Infinity;
+    for (let i = 0; i < n; i += 1) {
+      top = Math.max(top, values[i]);
+    }
+    let sum = 0;
+    for (let i = 0; i < n; i += 1) {
+      sum += Math.exp((values[i] - top) / k);
+    }
+    return top + k * Math.log(sum);
+  }
+
   /* Where the rail stops, short of the line: the gantry's near upright stands at the line, and a camera abeam of it would film every finish through a post. */
   const STOP_SHORT = 6;
   /*
@@ -220,11 +297,12 @@ export function makeShots({ course }) {
    * Where the rail aims relative to the group, in metres ahead of it: behind
    * it at the start, so the grid fills the left of the frame and the
    * gantry's near upright, which stands at the line, is well to the right of
-   * the middle and not a pole through it, and 4.5 m ahead of it once the
-   * launch is over, which is room for the pack to cross.
+   * the middle and not a pole through it, and 3 m ahead of it once the launch
+   * is over: room for the pack to cross, and the leader near enough the middle
+   * of a narrow lens that a bend the camera lags in does not lose it.
    */
   const AHEAD_START = -4;
-  const AHEAD_RACE = 4.5;
+  const AHEAD_RACE = 3;
   const MAX_YAW = (44 * Math.PI) / 180;
   const MAX_SPEED = 80;
   const CATCH_UP = 1.5;
@@ -260,7 +338,7 @@ export function makeShots({ course }) {
     }
     const maxYaw = calm ? (CALM_YAW * Math.PI) / 180 : MAX_YAW;
     /* How far from the middle of this window's frame the leader may get: a share of the way to its edge. */
-    const vertical = (fovFor(CALM_FOV, shape) * Math.PI) / 180;
+    const vertical = (fovFor(CALM_FOV, shape, CALM_MIN_HORIZONTAL) * Math.PI) / 180;
     const cutAt = CALM_CUT * Math.atan(Math.tan(vertical / 2) * shape);
     const stopS = plan.laps * course.lap - STOP_SHORT;
     const frames = Math.ceil(plan.duration * TABLE_HZ) + 2;
@@ -330,6 +408,60 @@ export function makeShots({ course }) {
   }
 
   /*
+   * The vertical field, in degrees, that holds the first two quads in the
+   * frame the eye and the aim give, each no further out than PHOTO_FIT of the
+   * way to the edge, at this aspect. Half a quad's span is added to how far
+   * out each one is, because the frame has to hold the whole of it. The two
+   * numbers that would have a kink in them, how far out a quad is (an
+   * absolute value, which turns at the middle of the frame) and which is the
+   * greatest (a maximum) are made smooth: a soft absolute value and a soft
+   * maximum, both of which are a little over the real thing, and so are on
+   * the safe side.
+   */
+  function photoFit(plan, t, aspect) {
+    const yaw = Math.atan2(aim.y - eye.y, aim.x - eye.x);
+    const pitch = Math.atan2(aim.z - eye.z, Math.hypot(aim.x - eye.x, aim.y - eye.y));
+    const quads = Math.min(2, plan.count);
+    for (let p = 0; p < quads; p += 1) {
+      plan.pose(plan.order[p], Math.min(t, plan.duration), fitPose);
+      const dx = fitPose.x - eye.x;
+      const dy = fitPose.y - eye.y;
+      const flat = Math.hypot(dx, dy);
+      const half = Math.atan2(QUAD_HALF, Math.hypot(flat, fitPose.z - eye.z));
+      let bearing = Math.atan2(dy, dx) - yaw;
+      bearing = Math.atan2(Math.sin(bearing), Math.cos(bearing));
+      const elevation = Math.atan2(fitPose.z - eye.z, flat) - pitch;
+      needs[2 * p] = Math.tan(Math.min(1.4, softAbs(bearing) + half)) / aspect;
+      needs[2 * p + 1] = Math.tan(Math.min(1.4, softAbs(elevation) + half));
+    }
+    const tangent = softMax(needs, 2 * quads, 0.012) / PHOTO_FIT;
+    return (2 * Math.atan(tangent) * 180) / Math.PI;
+  }
+
+  /*
+   * The rail's lens at race time t, under a cap of `cap` degrees, which is the
+   * race lens until the winner has crossed and opens to the finish lens after
+   * it, for the flip. Inside the cap the photo finish narrows the lens as far
+   * as photoFit says it can, and no further than PHOTO_FOV, and only as the
+   * aim comes round to the line: while the camera is still following the pack
+   * the pair are in the middle of the frame, and a lens that fitted them there
+   * would pump out again as the aim swung. Well before the pair reach the line,
+   * and well after they have gone, the fit is far wider than the cap and there
+   * is nothing to work out.
+   */
+  function railLens(plan, t, cap, aspect, turn) {
+    const crossed = plan.finish[plan.order[0]];
+    const second = plan.count > 1 ? plan.finish[plan.order[1]] : crossed;
+    const gate = jerk((turn - 0.6) / 0.4);
+    if (gate <= 0 || t < crossed - FIT_BEFORE || t > second + FIT_AFTER) {
+      return cap;
+    }
+    const fit = photoFit(plan, t, aspect);
+    const tight = 0.5 * (fit + PHOTO_FOV + Math.sqrt((fit - PHOTO_FOV) * (fit - PHOTO_FOV) + 4));
+    return cap + (softMin(tight, cap, 1.5) - cap) * gate;
+  }
+
+  /*
    * The rail at race time t. It follows the leading group, with room ahead of
    * the leader, no faster round a bend than the turn limit allows, and glides
    * to a stop short of the finish line so the pack crosses a still frame.
@@ -343,8 +475,20 @@ export function makeShots({ course }) {
     const turn = calm ? 0 : jerk(1 - (plan.laps * course.lap - STOP_SHORT - aimS) / FINISH_EASE);
     course.rail(aimS, eye);
     course.place(aimS + STOP_SHORT * turn, 0, 1.4, aim);
-    const fov = calm ? CALM_FOV : RAIL_FOV + (OPEN_FOV - RAIL_FOV) * open + FINISH_WIDEN * turn;
-    return lookAt(out, eye, aim, fov);
+    if (calm) {
+      return lookAt(out, eye, aim, CALM_FOV, CALM_MIN_HORIZONTAL);
+    }
+    /*
+     * The lens this window is given, which is the window's own minimum
+     * horizontal field applied here and not by the world, so that a zoom is a
+     * glide down from the lens a narrow window really has. The cap opens from
+     * the race lens to the finish lens once the winner has crossed, and the
+     * window's minimum opens with it.
+     */
+    const race = fovFor(RAIL_FOV + (OPEN_FOV - RAIL_FOV) * open, aspect, MIN_HORIZONTAL);
+    const finish = fovFor(FINISH_FOV, aspect, FINISH_MIN_HORIZONTAL);
+    const cap = race + (finish - race) * jerk((clock - plan.finish[plan.order[0]]) / FINISH_OPEN);
+    return lookAt(out, eye, aim, railLens(plan, clock, cap, aspect, turn), 0);
   }
 
   /*
@@ -413,12 +557,12 @@ export function makeShots({ course }) {
     return lookAt(out, eye, aim, AERIAL_FOV + (first.fov - AERIAL_FOV) * e);
   }
 
-  /* The held frame, where the rail stops: looking at the line, a shade wider than the race, so the pack has room to cross it and the winner room to flip. */
+  /* The held frame, where the rail parks: looking at the line, on the finish lens, so the winner has room to flip. */
   function held(plan, out = {}) {
     const stopS = plan.laps * course.lap - STOP_SHORT;
     course.rail(stopS, eye);
     course.place(stopS + STOP_SHORT, 0, 1.4, aim);
-    return lookAt(out, eye, aim, RAIL_FOV + FINISH_WIDEN);
+    return lookAt(out, eye, aim, FINISH_FOV, FINISH_MIN_HORIZONTAL);
   }
 
   /*

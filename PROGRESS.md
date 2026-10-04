@@ -416,3 +416,81 @@ A `v2` of the algorithm, a server of any kind, any partner mark, the site icon, 
 ### Open questions for the owner
 
 The site icon's accent (the page ships `data:,`), whether the picker is mounted under `webfpv.org/<mount>/` (every URL is already relative, and the `?v=` rule would apply from that day), whether any official partner mark appears here (none does: this app runs no Betaflight code and a placement is agreed one at a time), and whether to push the branch to `main` again (it is a fast forward of the owner's last push; I have not).
+
+
+## 2026-10-04 | milestone 5, follow up | Bigger drones, and a zoom on the photo finish
+
+The owner's words: "can we make the drones bigger so it's easier to follow along and maybe zoom in on the PHOTO finish". Nothing here changes the draw or the plan: the same receipt flies the same race, and only how it is filmed and how big the quads are drawn has moved. No decision in this entry needed the owner: no algorithm, no dependency, no partner or sponsor, no other repository.
+
+### What changed
+
+- **The quads are drawn 2.2 times life size, up from 1.7**, and 2.2 is the ceiling. The planner keeps every pair at least 0.88 m apart (the least closest approach in 36 plans of 5 to 50 quads at every length was 0.879 m, the median 0.900), a quad's span across its props is 0.347 m times the scale, which is 0.76 m, and that leaves 0.12 m in the worst case. The old comment in `src/layout.js` read the planner's guarantee as 0.5 m. The start blocks grow with it and are still well under the lane spacing across.
+- **The race lens is 26 degrees, down from 34**, with the camera aiming 3 m ahead of the pack and not 4.5, so the leader sits nearer the middle of a narrower frame. The window's minimum horizontal field is 44 degrees (it was 50), which is what a 16 by 9 window needs to be left at 26: at 50 the rule would have widened it to 29.4.
+- **A photo finish zooms** (`photoFit` and `railLens` in `src/camera.js`). The lens narrows as far as keeps the first two quads and the line inside the frame, each no further out than 80 per cent of the way to the edge, down to 14 degrees, holds through the second's crossing, and opens to the finish lens, 40 degrees, as the winner flies off for the flip. There is no rule about gaps in it: a clear win has the second far behind, the lens would have to be wider than the race lens to hold both, and nothing narrows. It is a pure function of the plan and the clock, smooth by construction (a soft maximum and a soft absolute value, no filter that remembers), and it waits for the aim to come round to the line, because while the camera is still following the pair they are in the middle of the frame and a lens that fitted them there would pump out again as the aim swung.
+- **A phone held upright zooms too.** The rail works the window's minimum horizontal field out itself and hands back the lens that results, so a zoom on a narrow window is a glide down from the lens that window really has, 71 degrees high, and not a step from a 26 degree lens that would be 15 across. The finish frame goes back to the 50 degrees across the phone had, for the flip, and the calm rail never left it.
+- **`world.js`** passes the shot's own minimum (`view.minH`) to `fovFor`. **`tests/camera.test.js`** goes from 14 tests to 16: the photo finish test (both quads inside the fit at every instant, over the nine plans and a close finish and a clear win found by label, on a wide window and a phone; narrowest lens; a close finish tight at the line; a clear win not moving; the calm rail not zooming) and the smoothness test. **`scripts/shots.js`**'s `photo` scenario reads the zoom from outside the page.
+- `CLAUDE.md` has the finish lens, the photo zoom and the fleet scale ceiling, and the README says what a photo finish does.
+
+### Measured
+
+    npm test        139 of 139 pass (137 before: the photo finish test and the smoothness test are new)
+    npm run lint    16 of 16 clean
+    node scripts/csp.js --check   both pages current
+    node scripts/shots.js   129 of 129 checks, nine scenarios (flow 37, sheet 18, actions 11, sound 20, reduced 7, reload 13, phone 6,
+                            bare 10, photo 7), about four minutes of wall clock
+
+    the top three's width at 1920 by 1080, over the same nine plans, before and now:
+        5th percentile 37 and 65 px, median 48 and 83, least 30 and 46
+    the same on a 390 by 844 phone held upright: 11 and 17, 14 and 21, 9 and 13
+    the leader in frame in every sampled frame, wide and phone, before and now. The least margin to the edge of the frame was 8.7 degrees
+        before and is 4.8 degrees wide and 4.5 on a phone now, which is where a photo finish holds it at 80 per cent of the way out
+    the same over windows of nine shapes, 0.46, 0.56, 0.75, 1.0, 1.33, 1.6, 1.78, 2.0 and 2.4 across to high: the leader out of frame
+        in 0 of 8,895 frames at each, the least margin 4.5 degrees (the 44 degree minimum, at the narrow ones) to 5.7
+    the race lens on a 16 by 10 window is 28.3 degrees, on 4 by 3 it is 33.8, on a square 44.0: the minimum, not the lens, decides there
+    the lens at the line, a finish 0.046 s apart 15.6 degrees and the photo finish draw's 0.073 s apart 14.3, against 26 for the race lens;
+        a clear win, 0.69 s apart, does not move from 26 at any instant from 1.5 s before the line to the line
+    both of the first two inside 82 per cent of the way to the edge at every instant the lens is narrower than the race lens: 11 plans,
+        wide and phone, every hundredth of a second from 1.5 s before the winner to 1.5 s after the runner up
+    the lens through a photo finish steps at most 0.66 degrees in 1/120 s on a wide window and 2.25 on a phone, and 2.5 s after the line is
+        the finish lens, 40 degrees (79.3 on a phone, which has its 50 across)
+    the winner in frame after the line, of a flip that takes 0.9 s, before and now: wide 0.45 s at the least and 0.73 median, then
+        0.49 and 0.78; phone 0.30 and 0.53, then 0.29 and 0.52
+    on the page, replaying the photo finish draw at 1280 by 720: the first two tags 243 px apart at the line, against 133 with the zoom
+        taken out, which is where the check's 190 came from; the winner's tag on the glass for 1.10 s of race time after the line (1.00 to
+        1.04 before); the last 0.8 s at 0.31 to 0.35 of the speed
+    the planner's closest approach, in 36 plans (5, 12, 23 and 50 quads, every length, three seeds): least 0.879 m, 10th percentile 0.900,
+        median 0.900. Photo finishes by the quarter of a second rule: 16 of the 36.
+
+    two mutation tests: with the fit ignoring the runner up, the photo finish test fails and nothing else in the camera tests does; with the zoom taken out
+    of the lens, the live check's tags are 133 px apart and the check fails. Each file was put back and compared byte for byte with the
+    copy kept first.
+
+Not measured: a real GPU, a real phone, any browser but Chromium, how the zoom feels at the real frame rate (about ten frames a second here), or whether anyone enjoys it. Those are the owner's pass.
+
+### What went wrong, in the order it was found
+
+- **A narrower lens would have been undone by a rule I had already written.** The minimum horizontal field of 50 degrees, made for a phone, widens a 26 degree lens to 29.4 on a 16 by 9 window and to 32.5 on 16 by 10. I saw it before writing any of the lens, from the arithmetic, and not from a picture.
+- **The first fit zoomed in during the approach and pumped.** Printing the lens against time before looking at any picture showed 15.6 degrees a second before the line, then 25.8, then 14.3, then 40: while the camera is still following the pair they sit in the middle of the frame and a lens that fits them there is tight, and as the aim swings to the line they drift out and the lens opens again. It is gated by how far the aim has come round, and the sequence is now one push in.
+- **On a phone the zoom was clamped away.** The fit is a vertical number, and on a window a ninth as wide as it is high the minimum horizontal field decides the lens, so a request for 24 degrees became 71 and the zoom changed almost nothing, and making the minimum give way by itself would have been a cut from 71 to 24. The cap had to be the window's own lens, which the camera now applies.
+- **The tests were measuring a different camera from the one on the screen.** They worked frames out with the default minimum and without the window's aspect, so on a phone they lost the leader in 5 of 17,786 frames and saw the flip for 0.21 s, and the calm rail lost it in 508 of 35,559. The page passes the shot's own minimum and the window's aspect, and the tests now do exactly that. No threshold of theirs moved for that: the flip floors are still 0.4 s and 0.25 s.
+- **Two assertions did change, and they are said here.** The phone test asserted 49.9 degrees across, which is the old rule, and asserts the constant now, 44, with the finish frame's and the calm rail's 50 held beside it. The size floors went up, from 40, 36 and 28 px to 75, 60 and 42, to hold what the new lens and scale measure and not to let anything pass.
+- **The calm rail lost the leader on a phone when the default minimum came down** (24 frames, and 32 cuts a lap against a limit of 20), because its table was made for 50. It keeps its own.
+- **The first on-screen check of the zoom was going to be a number I had not measured.** The zoom cannot be read off the page except through where things stand, so the check is the gap between the first two tags at the line: 243 px with the zoom and 133 px with it taken out, at 1280 by 720, and the line is at 190.
+
+### Decisions to know about
+
+- **44 per cent of races are photo finishes by the quarter of a second rule that was already there** (16 of 36 plans), so the zoom and the slow motion are common, not rare. It reads as a feature of most races.
+- **The lens is a few constants and the quads are one**, `RAIL_FOV`, `AHEAD_RACE`, `MIN_HORIZONTAL` and `FLEET_SCALE`, if it wants nudging. The scale has no more room. The lens has almost none: on a 16 by 9 window the 44 degree minimum already holds it at 25.6 degrees high, so a `RAIL_FOV` of 24 or 22 changes nothing there (measured, the median stays 84 px), and going tighter means lowering the minimum too, which narrows every window that is not as wide as 16 by 9 and a phone upright with it.
+- **The finish frame is no longer the race lens plus four degrees.** It is the race lens until the winner crosses and the finish lens, 40 degrees, after, opening over 0.4 s, and the parked frame is the finish lens (the `held` shot and the rail at the end agree, which the finish test holds).
+- **A window less wide than 16 by 9 gets a wider race lens**, 28.3 degrees at 16 by 10 and 33.8 at 4 by 3, because of the 44 degree minimum, and so smaller quads. It is the price of the rule.
+
+### What I saw and did not fix
+
+- **The timing tower covers the left fifth of the frame, which is where the chasers are in the approach.** In the half second before the zoom engages the runner up can be under the tower, and the pair are only both in the clear once the lens has closed in. A view offset that puts the picture's middle in the clear part of the window, the way the setup sheet's slide already does, is the fix, and it is not made.
+- **The beat's lettering ("RAJ WINS") can stand over a tag** at the top middle of a tight frame, because tags avoid the tower, the clock and the chip and not the beat.
+- **A phone held upright still shows the pack small**: the top three's median is 21 px on a 390 pixel window, up from 14.
+- **Nobody has watched the zoom move.** The lens steps at most 0.66 degrees in 1/120 s on a wide window and 2.25 on a phone, which is smooth on paper; how it feels at the real frame rate, in slow motion, is the owner's pass.
+
+### Open questions for the owner
+
+Whether the quads want to be bigger still (it means a lower minimum horizontal field, and narrower windows pay for it), and whether the picture should be shifted clear of the timing tower.

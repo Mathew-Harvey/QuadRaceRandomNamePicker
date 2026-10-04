@@ -13,7 +13,7 @@ It is part of the WebFPV family, with the simulator, the track builder, the boar
 1. Type or paste names, one to a line, two to fifty. A line with commas in it is offered a split. A name entered twice has two tickets, and the odds under the list say so.
 2. Optionally give the race a title, drop up to four sponsor logos in, and choose how many winners (one to three) and how long the race is (15, 30 or 60 seconds).
 3. Press **Arm and race**. The seal appears first: "Sealed before the start", the fingerprint (twelve hex digits) and the full commitment under it. It folds into the corner, the fingerprint goes up on the gantry's scoreboard, and both stay there through the start lights and the race.
-4. The race ends on the winner crossing the line, then the results page opens as a manga page: the winner's picture, the order, the seal ticked or not, and the receipt.
+4. The race ends on the winner crossing the line, then the results page opens as a manga page: the winner's picture, the order, the seal ticked or not, and the receipt. When the first two cross within a quarter of a second of each other, which is a bit under half of all races, the last 0.8 s plays at a third of the speed and the camera zooms in as far as it can while it keeps both of them and the line in frame, then opens out again for the winner's flip.
 
 From the results page you can race again, draw again without the winners, edit the names, watch the race again, copy or save the receipt, and open the verifier. **Draws in this browser** on the setup sheet lists every draw made here, each of which can be replayed, verified, copied and saved. A replay says REPLAY on every screen it shows and never issues a receipt of its own.
 

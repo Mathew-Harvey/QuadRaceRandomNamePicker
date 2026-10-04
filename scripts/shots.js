@@ -1053,6 +1053,7 @@ async function photo() {
   const slow = photoWindow(plan);
   check('photo', 'the draw in the log is a photo finish, with a window for the slow motion', Boolean(slow), JSON.stringify(slow));
   const winner = receipt.names[derived.order[0]];
+  const runnerUp = receipt.names[derived.order[1]];
   const entry = JSON.stringify(JSON.stringify([receipt]));
   const page = await open({
     width: 1280, height: 720, query: { speed: '1' }, seed: [`localStorage.setItem('webfpv-picker/v1/log', ${entry});`],
@@ -1086,6 +1087,19 @@ async function photo() {
     const inside = steps.filter((s) => s.at > slow.from + 0.1 && s.at < slow.to - 0.1).map((s) => s.d);
     const ratio = mean(inside) / mean(before);
     check('photo', 'the last 0.8 s before the line runs at about a third of the speed', inside.length >= 12 && ratio > 0.25 && ratio < 0.42, `${inside.length} frames inside the window, ${before.length} before it, ratio ${ratio.toFixed(2)}`);
+    /*
+     * The lens closes in on a photo finish. At the first frame after the winner
+     * has crossed, the winner and the runner up are 1.6 m apart, and their tags
+     * stand over them: the width of the gap between the tags is how big the
+     * picture is, which is the one thing about the lens that can be read from
+     * outside the page. Measured both ways, with the zoom taken out and in.
+     */
+    const crossing = samples.find((s) => s.state === 'finish');
+    const where = (name) => crossing && crossing.tags.find((t) => t.name === name);
+    const apart = where(winner) && where(runnerUp) ? Math.abs(where(winner).x - where(runnerUp).x) : NaN;
+    note(`at the line the winner's tag and the runner up's stand ${apart.toFixed(0)} px apart at 1280 by 720`);
+    /* 243 px with the zoom and 133 without it, over one replay of the same draw: the line is between them. */
+    check('photo', 'at the line the first two are far enough apart on the glass that the lens has closed in on them', apart >= 190, `${apart} px`);
     /* Race seconds, which the page's clock stops counting at the line: a frame is worth the time since the last, no more than the tenth of a second the page clamps it to. */
     const after = samples.filter((s) => s.state === 'finish');
     let seen = 0;

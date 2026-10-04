@@ -66,15 +66,21 @@ import { GRID, LATTICE, makeCourse } from './course.js';
 export const FIELD = Object.freeze({ width: 200, depth: 100 });
 
 /*
- * How much larger than life the fleet is drawn. A five inch quad is 0.28 m
- * across its props, which at the 20 m the rail camera stands from the line is
- * 21 pixels in a 1080 line frame: a dot, and the brief wants 40. The planner
- * keeps every pair 0.85 m apart, so 1.7 is as far as the fleet can grow
- * before two neighbours' props overlap on screen. The start blocks grow with
- * it (padSize is the block's own scale, 0.6 m at life size), so a quad sits
- * on a block it fits.
+ * How much larger than life the fleet is drawn. A five inch quad is 0.35 m
+ * across its props, a dot from the 20 m the rail camera stands from the line,
+ * and the brief wants the leaders to read as quads. The ceiling is the
+ * planner, which keeps every pair at least 0.88 m apart
+ * (measured over 36 plans, the least closest approach in any of them was
+ * 0.879 m, the median 0.900), so a quad's span, 0.347 m times this, has to stay
+ * clear of that with room for the props of two neighbours not to meet. At 2.2
+ * it is 0.76 m, which leaves 0.12 m in the worst case. It was 1.7, set when
+ * the planner's guarantee was read as 0.5 m, and the quads were still too small
+ * to follow; the rest of their size is the camera's lens. The start blocks
+ * grow with it (padSize is the block's own scale, 0.6 m at life size), so a
+ * quad sits on a block it fits, and a block is still under half the lane
+ * spacing across.
  */
-export const FLEET_SCALE = 1.7;
+export const FLEET_SCALE = 2.2;
 export const PAD_SIZE = 0.6 * FLEET_SCALE;
 
 /* How far inside the line a flag stands: the inner edge of the 12 m track. */

@@ -35,7 +35,8 @@ import assert from 'node:assert/strict';
 import { GRID, makeCourse } from '../src/course.js';
 import { FLIP, makePlan } from '../src/choreo.js';
 import {
-  AERIAL_FOV, CALM_FOV, CALM_YAW, FIRST_LAMP_K, HERO_AFTER, HERO_DISTANCE, HERO_FLOOR, HERO_FOV, HERO_RISE, OPEN_FOV, RAIL_FOV, fovFor, makeShots,
+  AERIAL_FOV, CALM_FOV, CALM_MIN_HORIZONTAL, CALM_YAW, FINISH_FOV, FINISH_MIN_HORIZONTAL, FIRST_LAMP_K, HERO_AFTER, HERO_DISTANCE, HERO_FLOOR, HERO_FOV, HERO_RISE,
+  MIN_HORIZONTAL, OPEN_FOV, PHOTO_FIT, PHOTO_FOV, QUAD_HALF, RAIL_FOV, fovFor, makeShots,
 } from '../src/camera.js';
 import { LIGHTS } from '../src/show.js';
 import { FLEET_SCALE } from '../src/layout.js';
@@ -96,14 +97,14 @@ test('the leader is in frame from the end of the launch to the line, at 16 by 9 
     for (const { plan } of PLANS) {
       const winner = Math.min(...plan.finish);
       for (let t = 1.7; t <= winner; t += 1 / 60) {
-        shots.rail(plan, t, view);
+        shots.rail(plan, t, view, false, aspect);
         const lead = plan.rank(t, rank)[0];
         plan.pose(lead, t, pose);
         const yaw = Math.atan2(view.ty - view.y, view.tx - view.x);
         const flatView = Math.hypot(view.tx - view.x, view.ty - view.y);
         const bearing = wrap(Math.atan2(pose.y - view.y, pose.x - view.x) - yaw);
         const elevation = Math.atan2(pose.z - view.z, Math.hypot(pose.x - view.x, pose.y - view.y)) - Math.atan2(view.tz - view.z, flatView);
-        const vertical = (fovFor(view.fov, aspect) * Math.PI) / 180;
+        const vertical = (fovFor(view.fov, aspect, view.minH) * Math.PI) / 180;
         const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * aspect);
         frames += 1;
         if (Math.abs(bearing) > horizontal / 2 || Math.abs(elevation) > vertical / 2) {
@@ -116,13 +117,14 @@ test('the leader is in frame from the end of the launch to the line, at 16 by 9 
   }
 });
 
-test('the leading quads are about 40 pixels across at 1920 by 1080: measured, and the shortfall is said', () => {
+test('the leading quads are about 80 pixels across at 1920 by 1080: measured', () => {
   const view = {};
   const pose = {};
   const rank = [];
   const widths = [];
   /* A quad is 0.347 m across its props along the diagonal (motor to motor 0.220 m and a 5 inch disc), drawn at the fleet's scale. */
   const across = 0.347 * FLEET_SCALE;
+  assert.ok(QUAD_HALF >= across / 2, `the photo finish fits a quad half ${QUAD_HALF} m across, and the fleet is drawn ${across / 2} m`);
   for (const { plan } of PLANS) {
     const winner = Math.min(...plan.finish);
     for (let t = 1.7; t <= winner; t += 1 / 30) {
@@ -139,10 +141,17 @@ test('the leading quads are about 40 pixels across at 1920 by 1080: measured, an
   widths.sort((a, b) => a - b);
   const at = (q) => widths[Math.floor(widths.length * q)];
   console.log(`camera: the top three are ${at(0.05).toFixed(1)} px at the 5th percentile, ${at(0.5).toFixed(1)} median, ${widths[0].toFixed(1)} least, at 1920 by 1080`);
-  /* The brief's 40 is a floor for the leading group. The median clears it by some way, the fifth percentile is two pixels under, and the least is a quad in the outer lane of a bend, thirty metres off. PROGRESS.md says so; this holds the numbers from getting worse. */
-  assert.ok(at(0.5) >= 40, `the median is ${at(0.5)}`);
-  assert.ok(at(0.05) >= 36, `the 5th percentile is ${at(0.05)}`);
-  assert.ok(widths[0] >= 28, `the least is ${widths[0]}`);
+  /*
+   * The brief asked for 40 for the leading group, and at 48 a person could
+   * not follow them. The quads are drawn 2.2 times life size, which is as big
+   * as the planner's spacing lets them be, and the lens is 26 degrees, and
+   * these are what that measures: 83 at the median, 65 at the fifth
+   * percentile, and 46 for the least, a quad in the outer lane of a bend.
+   * They are held from getting worse.
+   */
+  assert.ok(at(0.5) >= 75, `the median is ${at(0.5)}`);
+  assert.ok(at(0.05) >= 60, `the 5th percentile is ${at(0.05)}`);
+  assert.ok(widths[0] >= 42, `the least is ${widths[0]}`);
 });
 
 test('the camera never crosses the line, and stops short of it square to the finish', () => {
@@ -268,11 +277,15 @@ test('the paddock orbit stays a fixed distance from the middle of the grid, abov
   }
 });
 
-test('a phone held upright gets a lens wide enough to show the track', () => {
+test('a phone held upright gets a lens wide enough to show the pack, and a wide window is not touched', () => {
+  /* The race lens is 44.7 degrees across on a 16 by 9 window, which is over the minimum, so the minimum does not widen it. */
   assert.equal(fovFor(RAIL_FOV, 16 / 9), RAIL_FOV);
+  const across = (vertical, aspect) => (2 * Math.atan(Math.tan((vertical * Math.PI) / 360) * aspect) * 180) / Math.PI;
   const portrait = fovFor(RAIL_FOV, 9 / 16);
-  const horizontal = (2 * Math.atan(Math.tan((portrait * Math.PI) / 360) * (9 / 16)) * 180) / Math.PI;
-  assert.ok(horizontal >= 49.9, `the horizontal field is ${horizontal} degrees`);
+  assert.ok(across(portrait, 9 / 16) >= MIN_HORIZONTAL - 0.1, `the horizontal field is ${across(portrait, 9 / 16)} degrees`);
+  /* The calm rail and the finish frame keep the 50 degrees a phone had before the race lens was brought in. */
+  assert.ok(across(fovFor(CALM_FOV, 9 / 16, CALM_MIN_HORIZONTAL), 9 / 16) >= CALM_MIN_HORIZONTAL - 0.1);
+  assert.ok(across(fovFor(FINISH_FOV, 9 / 16, FINISH_MIN_HORIZONTAL), 9 / 16) >= FINISH_MIN_HORIZONTAL - 0.1);
 });
 
 test('the winner\'s picture is aimed at the winner, from the infield, a fixed way off, when the flip is half way round', () => {
@@ -302,11 +315,108 @@ function inFrame(view, point, aspect, margin = 0) {
   const flatView = Math.hypot(view.tx - view.x, view.ty - view.y);
   const bearing = wrap(Math.atan2(point.y - view.y, point.x - view.x) - yaw);
   const elevation = Math.atan2(point.z - view.z, Math.hypot(point.x - view.x, point.y - view.y)) - Math.atan2(view.tz - view.z, flatView);
-  const vertical = (fovFor(view.fov, aspect) * Math.PI) / 180;
+  const vertical = (fovFor(view.fov, aspect, view.minH) * Math.PI) / 180;
   const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * aspect);
   const m = (margin * Math.PI) / 180;
   return Math.abs(bearing) <= horizontal / 2 - m && Math.abs(elevation) <= vertical / 2 - m;
 }
+
+/* How far out a point is, as a share of the way from the middle of a shot's frame to its edge, the further of across and up: 1 is on the edge. */
+function share(view, point, aspect) {
+  const yaw = Math.atan2(view.ty - view.y, view.tx - view.x);
+  const flatView = Math.hypot(view.tx - view.x, view.ty - view.y);
+  const bearing = wrap(Math.atan2(point.y - view.y, point.x - view.x) - yaw);
+  const elevation = Math.atan2(point.z - view.z, Math.hypot(point.x - view.x, point.y - view.y)) - Math.atan2(view.tz - view.z, flatView);
+  const vertical = (fovFor(view.fov, aspect, view.minH) * Math.PI) / 180;
+  const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * aspect);
+  return Math.max(Math.abs(bearing) / (horizontal / 2), Math.abs(elevation) / (vertical / 2));
+}
+
+/* Plans for the photo finish: the nine, and from a fixed list of labels the first close finish and the first clear win, which a search makes every run the same. */
+function finishPlans() {
+  const found = { close: null, clear: null };
+  for (let k = 0; k < 80 && !(found.close && found.clear); k += 1) {
+    const label = `webfpv-picker/test/photo/${k}`;
+    const plan = makePlan({
+      order: orderFor(12, label), showSeed: Buffer.from(label).toString('hex').padEnd(64, '0').slice(0, 64), length: 30,
+    });
+    const gap = plan.finish[plan.order[1]] - plan.finish[plan.order[0]];
+    if (!found.close && gap < 0.1) {
+      found.close = { plan, gap };
+    }
+    if (!found.clear && gap > 0.6) {
+      found.clear = { plan, gap };
+    }
+  }
+  assert.ok(found.close && found.clear, 'eighty labels have a close finish and a clear win in them');
+  return found;
+}
+
+test('a photo finish zooms, and never past the first two quads: a clear win does not zoom at all', () => {
+  const { close, clear } = finishPlans();
+  const view = {};
+  const first = {};
+  const second = {};
+  let narrowest = Infinity;
+  for (const { plan } of [...PLANS, close, clear]) {
+    const a = plan.finish[plan.order[0]];
+    const b = plan.finish[plan.order[1]];
+    for (const aspect of [16 / 9, 9 / 16]) {
+      const race = fovFor(RAIL_FOV, aspect, MIN_HORIZONTAL);
+      for (let t = a - 1.5; t <= b + 1.5; t += 0.01) {
+        shots.rail(plan, t, view, false, aspect);
+        const zoomed = view.fov < race - 0.5;
+        if (zoomed) {
+          plan.pose(plan.order[0], t, first);
+          plan.pose(plan.order[1], t, second);
+          const out = Math.max(share(view, first, aspect), share(view, second, aspect));
+          /* The fit is to PHOTO_FIT of the way to the edge, and a soft maximum is a little over the real one, which is on the safe side. */
+          assert.ok(out <= PHOTO_FIT + 0.02, `at ${(t - a).toFixed(2)} s from the line a quad is ${out.toFixed(2)} of the way to the edge, zoomed to ${view.fov.toFixed(1)} degrees, aspect ${aspect.toFixed(2)}`);
+        }
+        if (aspect > 1) {
+          narrowest = Math.min(narrowest, view.fov);
+        }
+      }
+    }
+  }
+  assert.ok(narrowest >= PHOTO_FOV - 0.5, `the lens goes to ${narrowest} degrees`);
+
+  /* A close finish is tight at the crossing, and it is the lens that did it. */
+  const a = close.plan.finish[close.plan.order[0]];
+  shots.rail(close.plan, a, view);
+  console.log(`camera: a finish ${close.gap.toFixed(3)} s apart is ${view.fov.toFixed(1)} degrees at the line, against the race lens's ${RAIL_FOV}, and a clear one ${clear.gap.toFixed(2)} s apart does not move`);
+  assert.ok(view.fov <= RAIL_FOV - 8, `a close finish is ${view.fov} degrees at the line`);
+
+  /* A clear win keeps the race lens right up to the line, and the calm rail keeps its own whatever happens. */
+  const c = clear.plan.finish[clear.plan.order[0]];
+  for (let t = c - 1.5; t <= c; t += 0.01) {
+    shots.rail(clear.plan, t, view);
+    assert.ok(Math.abs(view.fov - RAIL_FOV) < 0.2, `a clear win is ${view.fov} degrees at ${(t - c).toFixed(2)} s from the line`);
+  }
+  for (const t of [a - 0.5, a - 0.1, a, a + 0.2]) {
+    assert.equal(shots.rail(close.plan, t, view, true, 16 / 9).fov, CALM_FOV, 'the calm rail does not zoom');
+  }
+});
+
+test('the lens is smooth through a photo finish: no step of more than 2.5 degrees in 1/120 s, and it is open again after', () => {
+  const { close } = finishPlans();
+  const view = {};
+  const a = close.plan.finish[close.plan.order[0]];
+  for (const aspect of [16 / 9, 9 / 16]) {
+    let previous = null;
+    let worst = 0;
+    for (let t = a - 2; t <= a + 2.5; t += 1 / 120) {
+      shots.rail(close.plan, t, view, false, aspect);
+      if (previous !== null) {
+        worst = Math.max(worst, Math.abs(view.fov - previous));
+      }
+      previous = view.fov;
+    }
+    console.log(`camera: the lens through a photo finish steps at most ${worst.toFixed(2)} degrees in 1/120 s at aspect ${aspect.toFixed(2)}`);
+    assert.ok(worst <= 2.5, `the lens steps ${worst} degrees between frames at aspect ${aspect}`);
+    assert.ok(Math.abs(view.fov - fovFor(FINISH_FOV, aspect, FINISH_MIN_HORIZONTAL)) < 0.1, `and 2.5 s after the line it is the finish lens, ${view.fov}`);
+  }
+});
 
 test('the lamps are in frame from the first amber to green, on a wide window and on a phone', () => {
   /* FIRST_LAMP_K is the earliest the first lamp can be lit in the run of the lights, which show.js says, and the lamps stand in the gantry's header over the line. */
