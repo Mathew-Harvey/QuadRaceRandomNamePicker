@@ -22,10 +22,12 @@
  *              It glides to a stop short of the line, turning to look at the
  *              line as it stops, so the pack crosses a still frame with the
  *              line in the middle of it and room after the line for the flip.
- *              In a photo finish the lens narrows on the first two quads.
+ *              At the finish the lens narrows on the winner, and on the first
+ *              two quads in a photo finish.
  *   held       the rail's frame where it stops, as a fixed shot.
- *   hero       the winner, close, a moment after the line, for the results
- *              page's big panel.
+ *   hero       the winner, close: a moment after the line for the results
+ *              page's big panel, and from just after the line to the results
+ *              as the live cutaway for the flip.
  *
  * THE RAIL. It is 20 m inside the line and 5 m up. The pack crosses its frame
  * left to right all the way round because the quads race clockwise and the
@@ -111,24 +113,28 @@ export const FIRST_LAMP_K = 0.385;
  * in the frame. Before that it is the race lens, and the line is in the middle
  * of the frame with the last 9 m of the approach in it.
  *
- * THE PHOTO FINISH. 44 per cent of the races this makes have first and second
- * under a quarter of a second apart, and at the race lens they are two dots
- * either side of a line. So the lens narrows, and only as far as it can while
- * the first two quads and the line stay inside the frame, with every one of
- * them no further out than PHOTO_FIT of the way to its edge. How tight that
- * is comes from where the two are, not from a rule about gaps: with a
- * tenth of a second between them it goes down to PHOTO_FOV, with a clear win
- * the second is far behind, the lens would have to be wider than the race
- * lens to hold it, and nothing narrows at all. It is a pure function of the
- * plan and the clock, smooth by construction (a soft maximum and a soft
- * absolute value, never a filter that remembers), and it opens again as the
- * pair fly off past the line.
+ * THE ZOOM. 37 per cent of the races this makes (check 8 of the plan's tests,
+ * over 2,400 plans) have first and second under a quarter of a second apart
+ * (PHOTO_CLOSE), and at the race lens they are two dots either side of a line.
+ * So the lens narrows, and only as far as it can while the first two quads and
+ * the line stay inside the frame, with every one of them no further out than
+ * PHOTO_FIT of the way to its edge. How tight that is comes from where the two
+ * are, not from a rule about gaps: with a tenth of a second between them it
+ * goes down to PHOTO_FOV. A clear win zooms too, on the winner alone, because
+ * the second is a long way behind and holding it would take a lens wider than
+ * the race lens: the owner asked for the winner to be zoomed on, and there was
+ * nothing to zoom on but a pair. It is a pure function of the plan and the
+ * clock, smooth by construction (a soft maximum and a soft absolute value,
+ * never a filter that remembers), and it opens again as the quads fly off past
+ * the line.
  */
 export const FINISH_EASE = 30;
 export const FINISH_FOV = 40;
 export const FINISH_OPEN = 0.4;
 export const PHOTO_FOV = 14;
 export const PHOTO_FIT = 0.8;
+/* How close first and second are, in seconds, for the finish to be a photo finish: the lens fits both, and the beat and the longer slow part (src/show.js) are for it. */
+export const PHOTO_CLOSE = 0.25;
 /*
  * The window's minimum horizontal field in two other places. The finish frame
  * goes back to the 50 degrees a phone held upright had before the race lens
@@ -140,36 +146,52 @@ export const PHOTO_FIT = 0.8;
  */
 export const FINISH_MIN_HORIZONTAL = 50;
 export const CALM_MIN_HORIZONTAL = 50;
-/* Half the span of a quad at the scale src/layout.js draws it, in metres (0.347 m across its props, times 2.2, halved, and a hair over). */
-export const QUAD_HALF = 0.4;
+/* Half the span of a quad at the scale src/layout.js draws it, in metres (0.347 m across its props, times 3.0, halved, and a hair over). */
+export const QUAD_HALF = 0.55;
 /* Seconds before the winner crosses and after the second does that the fit is worked out in: outside them the pair are too far from the line to matter. */
 const FIT_BEFORE = 1.5;
 const FIT_AFTER = 1.5;
 
 /*
  * The winner's picture: 2.4 m off and a little below, looking up, 30 degrees
- * of vertical field, so a quad 0.4 m across is a third of the panel's height
- * and is against the trees and the sky and not the grass. On the rail's own
- * lens it would be forty pixels in a panel five hundred high, and the page is
- * lettered round a picture of it, so it is brought in. The eye is never lower
- * than HERO_FLOOR above the ground, whatever level the quad is flying at.
+ * of vertical field, so the quad is most of the panel's height and is against
+ * the trees and the sky and not the grass. On the rail's own lens it would be
+ * forty pixels in a panel five hundred high, and the page is lettered round a
+ * picture of it, so it is brought in. The eye is never lower than HERO_FLOOR
+ * above the ground, whatever level the quad is flying at.
+ *
+ * It is also the live cutaway (winnerCut in src/show.js): the same camera,
+ * following the winner through the flip, for a person who has not asked for
+ * less motion. There the window is whatever shape it is, and the narrowest
+ * horizontal field it may be given is HERO_MIN_HORIZONTAL, so a phone held
+ * upright is shown a quad and not a tall strip of sky; the results page works
+ * its own field out and does not use it.
  */
 export const HERO_FOV = 30;
 export const HERO_DISTANCE = 2.4;
 export const HERO_RISE = -0.25;
 export const HERO_FLOOR = 0.6;
+export const HERO_MIN_HORIZONTAL = 30;
 
-/* How long after the winner crosses the picture is taken: the flip is half way round, and the quad is upside down. */
-export const HERO_AFTER = 0.45;
+/*
+ * How long after the winner crosses the picture is taken: a tenth of a second,
+ * with the flip 4 degrees in, so the quad is the right way up and at the line.
+ * It was 0.45, with the flip half way round, which is a quad upside down in
+ * the one picture of the winner there is, and the owner said so.
+ */
+export const HERO_AFTER = 0.1;
 
 const jerk = (t) => {
   const x = Math.min(1, Math.max(0, t));
   return x * x * x * (10 + x * (-15 + 6 * x));
 };
 
+/* Whether first and second cross within PHOTO_CLOSE of each other: the pair are fitted, and not the winner alone. */
+const isPhoto = (plan) => plan.count > 1 && plan.finish[plan.order[1]] - plan.finish[plan.order[0]] < PHOTO_CLOSE;
+
 /*
  * The narrowest horizontal field a window gets, in degrees, unless a shot
- * says otherwise (the photo finish and the finish frame do). The race lens is
+ * says otherwise (the zoom and the finish frame do). The race lens is
  * 26 degrees high, which is 44.7 across on a 16 by 9 window, so a window as
  * wide as that is not touched; it is for a narrow one, a phone held upright,
  * where the lens chosen for a wide frame would show seven metres of track.
@@ -408,10 +430,11 @@ export function makeShots({ course }) {
   }
 
   /*
-   * The vertical field, in degrees, that holds the first two quads in the
+   * The vertical field, in degrees, that holds the quads being fitted in the
    * frame the eye and the aim give, each no further out than PHOTO_FIT of the
-   * way to the edge, at this aspect. Half a quad's span is added to how far
-   * out each one is, because the frame has to hold the whole of it. The two
+   * way to the edge, at this aspect: the first two in a photo finish and the
+   * winner alone in a clear win. Half a quad's span is added to how far out
+   * each one is, because the frame has to hold the whole of it. The two
    * numbers that would have a kink in them, how far out a quad is (an
    * absolute value, which turns at the middle of the frame) and which is the
    * greatest (a maximum) are made smooth: a soft absolute value and a soft
@@ -421,7 +444,7 @@ export function makeShots({ course }) {
   function photoFit(plan, t, aspect) {
     const yaw = Math.atan2(aim.y - eye.y, aim.x - eye.x);
     const pitch = Math.atan2(aim.z - eye.z, Math.hypot(aim.x - eye.x, aim.y - eye.y));
-    const quads = Math.min(2, plan.count);
+    const quads = isPhoto(plan) ? 2 : 1;
     for (let p = 0; p < quads; p += 1) {
       plan.pose(plan.order[p], Math.min(t, plan.duration), fitPose);
       const dx = fitPose.x - eye.x;
@@ -441,19 +464,22 @@ export function makeShots({ course }) {
   /*
    * The rail's lens at race time t, under a cap of `cap` degrees, which is the
    * race lens until the winner has crossed and opens to the finish lens after
-   * it, for the flip. Inside the cap the photo finish narrows the lens as far
-   * as photoFit says it can, and no further than PHOTO_FOV, and only as the
-   * aim comes round to the line: while the camera is still following the pack
-   * the pair are in the middle of the frame, and a lens that fitted them there
-   * would pump out again as the aim swung. Well before the pair reach the line,
+   * it, for the flip. Inside the cap the zoom narrows the lens as far as
+   * photoFit says it can, and no further than PHOTO_FOV, and only as the aim
+   * comes round to the line: while the camera is still following the pack the
+   * quads are in the middle of the frame, and a lens that fitted them there
+   * would pump out again as the aim swung. Well before they reach the line,
    * and well after they have gone, the fit is far wider than the cap and there
-   * is nothing to work out.
+   * is nothing to work out. The window runs to FIT_AFTER past the runner up
+   * in a photo finish and past the winner in a clear win, who is the only one
+   * fitted.
    */
   function railLens(plan, t, cap, aspect, turn) {
     const crossed = plan.finish[plan.order[0]];
     const second = plan.count > 1 ? plan.finish[plan.order[1]] : crossed;
     const gate = jerk((turn - 0.6) / 0.4);
-    if (gate <= 0 || t < crossed - FIT_BEFORE || t > second + FIT_AFTER) {
+    const last = isPhoto(plan) ? second : crossed;
+    if (gate <= 0 || t < crossed - FIT_BEFORE || t > last + FIT_AFTER) {
       return cap;
     }
     const fit = photoFit(plan, t, aspect);
@@ -593,7 +619,7 @@ export function makeShots({ course }) {
     aim.x = pose.x;
     aim.y = pose.y;
     aim.z = pose.z;
-    return lookAt(out, eye, aim, HERO_FOV);
+    return lookAt(out, eye, aim, HERO_FOV, HERO_MIN_HORIZONTAL);
   }
 
   return {

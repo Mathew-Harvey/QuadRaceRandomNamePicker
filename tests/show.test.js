@@ -29,10 +29,10 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makePlan } from '../src/choreo.js';
+import { FLIP, makePlan } from '../src/choreo.js';
 import {
-  LIGHTS, SLOW, advanceClock, beatsBetween, beatsFor, commaList, foldedRow, formatClock, formatGap, gapOf, lapOf,
-  lightsAt, lightsPlan, numberTickets, oddsLines, ordinal, photoWindow, placeTags, readNames, standings, winnersAllowed,
+  LIGHTS, RESULTS_AFTER, SLOW, WINNER, advanceClock, beatsBetween, beatsFor, commaList, foldedRow, formatClock, formatGap, gapOf, lapOf,
+  lightsAt, lightsPlan, numberTickets, oddsLines, ordinal, photoWindow, placeTags, readNames, slowWindow, standings, winnerCut, winnersAllowed,
 } from '../src/show.js';
 import { specFor } from './lib/plan-cases.js';
 
@@ -126,6 +126,68 @@ test('the photo finish: the last 0.8 s before the line at a third of speed, and 
   }
   near(one, many, 1e-9, 'stepping all at once or a frame at a time');
   assert.equal(advanceClock(5, 2, null), 7);
+});
+
+test('the winner\'s moment: every finish is slow from 0.8 s before the line to a second after it, and a photo finish is inside that', () => {
+  let photos = 0;
+  let clears = 0;
+  for (let k = 0; k < 60; k += 1) {
+    for (const forced of [false, true]) {
+      const { plan } = planFor(k, forced ? { photo: true } : {});
+      const a = plan.finish[plan.order[0]];
+      const w = slowWindow(plan);
+      near(w.from, a - SLOW.before, 1e-12, 'it starts 0.8 s before the line');
+      near(w.to, a + WINNER.after, 1e-12, 'and runs a second past it');
+      assert.ok(w.to >= a + FLIP, 'the whole of the winner\'s flip is in the slow part');
+      const photo = photoWindow(plan);
+      if (photo) {
+        photos += 1;
+        assert.ok(w.from <= photo.from + 1e-12 && w.to >= photo.to, `plan ${k}: the slow window holds the photo finish`);
+      } else {
+        clears += 1;
+      }
+    }
+  }
+  assert.ok(photos >= 5 && clears >= 5, `${photos} photo finishes and ${clears} clear wins to hold it on`);
+  /* Through the window the page's second is a third of a race second, and out of it they are the same. */
+  const { plan } = planFor(3);
+  const w = slowWindow(plan);
+  let t = w.from - 1;
+  let wall = 0;
+  const dt = 1 / 60;
+  while (t < w.to + 1) {
+    t = advanceClock(t, dt, w);
+    wall += dt;
+  }
+  near(wall, 1 + (w.to - w.from) / SLOW.rate + 1, 0.05, 'wall time through the slow window');
+  near((w.to - w.from) / SLOW.rate, 5.4, 1e-9, 'which is 5.4 s of the page\'s own');
+});
+
+test('the cut to the winner\'s chase camera: a tenth of a second after the line, after the runner up in a photo finish, never for several winners', () => {
+  let photos = 0;
+  let clears = 0;
+  for (let k = 0; k < 60; k += 1) {
+    for (const forced of [false, true]) {
+      const { plan } = planFor(k, forced ? { photo: true } : {});
+      const a = plan.finish[plan.order[0]];
+      const b = plan.finish[plan.order[1]];
+      const cut = winnerCut(plan, 1);
+      if (b - a < SLOW.close) {
+        photos += 1;
+        near(cut, b + WINNER.cutPhoto, 1e-12, 'a photo finish is cut after the runner up has crossed');
+        assert.ok(cut > b, `plan ${k}: both crossings are seen from the rail first`);
+      } else {
+        clears += 1;
+        near(cut, a + WINNER.cut, 1e-12, 'a clear win is cut a tenth of a second after the line');
+      }
+      assert.ok(cut > a, 'after the line');
+      assert.ok(cut < slowWindow(plan).to - 0.5, 'and well inside the slow part, so that the flip is the chase camera\'s');
+      assert.ok(a + RESULTS_AFTER > slowWindow(plan).to, 'the results do not arrive before the slow part is over');
+      assert.equal(winnerCut(plan, 2), null, 'two winners stay on the rail: the second crosses while the first flips');
+      assert.equal(winnerCut(plan, 3), null);
+    }
+  }
+  assert.ok(photos >= 5 && clears >= 5, `${photos} photo finishes and ${clears} clear wins`);
 });
 
 test('the standings freeze at the draw: when the last quad has crossed, the tower is the drawn order', () => {

@@ -65,7 +65,7 @@ import { HERO_AFTER, HERO_FOV } from './camera.js';
 import { pixelBeforeBend } from './lens.js';
 import {
   advanceClock, beatsBetween, beatsFor, commaList, formatClock, gapOf, lapOf, lightsAt, lightsPlan, numberTickets,
-  oddsLines, photoWindow, placeTags, readNames, standings, winnersAllowed,
+  oddsLines, placeTags, readNames, RESULTS_AFTER, slowWindow, standings, winnerCut, winnersAllowed,
 } from './show.js';
 import { createHud } from './hud.js';
 import { RPM, createSound, raceRpm } from './sound.js';
@@ -107,10 +107,8 @@ const REDUCED = () => reducedQuery.matches;
 /* How long the seal stays on the glass before it folds into the corner, in seconds. */
 const SEAL_HOLD = 1.9;
 const SEAL_HOLD_STILL = 1.4;
-/* How long after the last drawn winner crosses the results arrive, in race seconds: the flip, and the beat that names them. */
-const RESULTS_AFTER = 2.6;
-/* A tag stands this high over its quad, in metres of the plan's frame. */
-const TAG_LIFT = 0.55;
+/* A tag stands this high over its quad, in metres of the plan's frame: clear of a quad drawn three times life size. */
+const TAG_LIFT = 0.7;
 /* The lamps when nothing is being shown. */
 const LAMPS_OFF = [0, false];
 
@@ -212,6 +210,9 @@ const slotErrors = Array.from({ length: SLOTS }, () => '');
 function setState(next) {
   state = next;
   body.dataset.state = next;
+  if (next !== 'race' && next !== 'finish') {
+    delete body.dataset.shot;
+  }
   syncEmptyNote();
   aimShift(false);
 }
@@ -773,7 +774,8 @@ async function startShow({ receipt, replay, kept = true }) {
     shown: fingerprint(derived.commitment),
     beats: beatsFor(plan, names, drawn),
     lights: lightsPlan(derived.showSeed),
-    window: photoWindow(plan),
+    window: slowWindow(plan),
+    cut: winnerCut(plan, drawn),
     first: plan.finish[plan.order[0]],
     endsAt: last + RESULTS_AFTER,
     phase: 'seal',
@@ -804,8 +806,14 @@ async function startShow({ receipt, replay, kept = true }) {
   }
 }
 
-/* One frame of the timing tower, the clock, the lap, the beats and the tags, from the plan at race time t. */
-function overlay(t) {
+/*
+ * One frame of the timing tower, the clock, the lap, the beats and the tags,
+ * from the plan at race time t. `tags` is false under the winner's chase
+ * camera: the quad is most of the frame's height there, the beat names it,
+ * and a tag stood 0.7 m over it would be at the very top edge of the picture,
+ * or over a runner up who is only in the corner of it.
+ */
+function overlay(t, tags = true) {
   const { plan } = show;
   const order = standings(plan, t, show.order);
   const shownRows = Math.min(hud.towerLimit, order.length);
@@ -832,7 +840,9 @@ function overlay(t) {
   }
   show.prevT = t;
 
-  if (world) {
+  if (world && !tags) {
+    hud.updateTags(NO_TAGS);
+  } else if (world) {
     const { w, h } = hud.size;
     const sizes = hud.tagSizes();
     const items = [];
@@ -983,6 +993,8 @@ function step(dt) {
       if (lit.green) {
         show.phase = 'race';
         show.t = 0;
+        /* The state and the camera are set together, so that no frame of the race has a state and no shot. */
+        body.dataset.shot = 'rail';
         setState('race');
       }
       break;
@@ -990,15 +1002,21 @@ function step(dt) {
     case 'race': {
       show.t = advanceClock(show.t, dt * SPEED, show.window);
       const t = show.t;
+      /* The winner's chase camera takes over from the rail a moment after the line (see winnerCut), and holds until the results arrive. A cut is a jump of the picture, so a person who has asked for less motion stays on the rail. */
+      const cutaway = show.cut !== null && t >= show.cut && !REDUCED();
+      /* Which camera the live picture is on, for the checks that read the page from outside: 'rail' or 'chase'. */
+      if (body.dataset.shot !== (cutaway ? 'chase' : 'rail')) {
+        body.dataset.shot = cutaway ? 'chase' : 'rail';
+      }
       world.frame({
-        shot: 'rail', t, plan, count, spin: 900, dt, discs: 0.24, wall, lamps: [0, true], offset, calm: REDUCED(),
+        shot: cutaway ? 'hero' : 'rail', t, plan, count, spin: 900, dt, discs: 0.24, wall, lamps: [0, true], offset, calm: REDUCED(),
       });
       if (!show.crossed && t >= show.first) {
         show.crossed = true;
         sound.sting();
         setState('finish');
       }
-      overlay(t);
+      overlay(t, !cutaway);
       /* The motors sing at the pace of whoever leads, and the leader's crossing of the line each lap is a click. */
       plan.pose(show.order[0], t, scratch);
       sound.motors({ rpm: raceRpm(scratch.speed, t, show.first), speed: scratch.speed });
@@ -1072,9 +1090,15 @@ function drawHero() {
   target.height = Math.max(1, Math.round(panel.box.h * k));
   const ctx = target.getContext('2d');
   ctx.drawImage(canvas, panel.box.x * k, panel.box.y * k, panel.box.w * k, panel.box.h * k, 0, 0, target.width, target.height);
-  /* The canvas itself goes back to the race's held frame, which is what the page opens round: it is in the hole of the paper while the picture comes in over it. */
+  /*
+   * The canvas itself goes back to what the race ended on, which is what the
+   * page opens round: the paper fades in over it. That is the winner's chase
+   * camera when the picture had cut to it, so that the paper does not come
+   * in over a jump to an empty frame of the track, and the rail's held frame
+   * when it had not.
+   */
   world.frame({
-    shot: 'rail',
+    shot: show.cut !== null && !REDUCED() ? 'hero' : 'rail',
     t: Math.min(show.plan.duration, show.endsAt),
     plan: show.plan,
     count: show.plan.count,

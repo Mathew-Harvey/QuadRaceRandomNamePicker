@@ -35,10 +35,12 @@ import assert from 'node:assert/strict';
 import { GRID, makeCourse } from '../src/course.js';
 import { FLIP, makePlan } from '../src/choreo.js';
 import {
-  AERIAL_FOV, CALM_FOV, CALM_MIN_HORIZONTAL, CALM_YAW, FINISH_FOV, FINISH_MIN_HORIZONTAL, FIRST_LAMP_K, HERO_AFTER, HERO_DISTANCE, HERO_FLOOR, HERO_FOV, HERO_RISE,
-  MIN_HORIZONTAL, OPEN_FOV, PHOTO_FIT, PHOTO_FOV, QUAD_HALF, RAIL_FOV, fovFor, makeShots,
+  AERIAL_FOV, CALM_FOV, CALM_MIN_HORIZONTAL, CALM_YAW, FINISH_FOV, FINISH_MIN_HORIZONTAL, FIRST_LAMP_K, HERO_AFTER, HERO_DISTANCE, HERO_FLOOR, HERO_FOV,
+  HERO_MIN_HORIZONTAL, HERO_RISE, MIN_HORIZONTAL, OPEN_FOV, PHOTO_CLOSE, PHOTO_FIT, PHOTO_FOV, QUAD_HALF, RAIL_FOV, fovFor, makeShots,
 } from '../src/camera.js';
-import { LIGHTS } from '../src/show.js';
+import {
+  LIGHTS, RESULTS_AFTER, advanceClock, slowWindow, winnerCut,
+} from '../src/show.js';
 import { FLEET_SCALE } from '../src/layout.js';
 import { orderFor } from './lib/plan-cases.js';
 
@@ -117,14 +119,14 @@ test('the leader is in frame from the end of the launch to the line, at 16 by 9 
   }
 });
 
-test('the leading quads are about 80 pixels across at 1920 by 1080: measured', () => {
+test('the leading quads are about 110 pixels across at 1920 by 1080: measured', () => {
   const view = {};
   const pose = {};
   const rank = [];
   const widths = [];
   /* A quad is 0.347 m across its props along the diagonal (motor to motor 0.220 m and a 5 inch disc), drawn at the fleet's scale. */
   const across = 0.347 * FLEET_SCALE;
-  assert.ok(QUAD_HALF >= across / 2, `the photo finish fits a quad half ${QUAD_HALF} m across, and the fleet is drawn ${across / 2} m`);
+  assert.ok(QUAD_HALF >= across / 2, `the zoom fits a quad half ${QUAD_HALF} m across, and the fleet is drawn ${across / 2} m`);
   for (const { plan } of PLANS) {
     const winner = Math.min(...plan.finish);
     for (let t = 1.7; t <= winner; t += 1 / 30) {
@@ -143,15 +145,17 @@ test('the leading quads are about 80 pixels across at 1920 by 1080: measured', (
   console.log(`camera: the top three are ${at(0.05).toFixed(1)} px at the 5th percentile, ${at(0.5).toFixed(1)} median, ${widths[0].toFixed(1)} least, at 1920 by 1080`);
   /*
    * The brief asked for 40 for the leading group, and at 48 a person could
-   * not follow them. The quads are drawn 2.2 times life size, which is as big
-   * as the planner's spacing lets them be, and the lens is 26 degrees, and
-   * these are what that measures: 83 at the median, 65 at the fifth
-   * percentile, and 46 for the least, a quad in the outer lane of a bend.
-   * They are held from getting worse.
+   * not follow them. The quads are drawn three times life size, which is
+   * more than the planner's spacing strictly allows and which the owner asked
+   * for on purpose (src/layout.js), and the lens is 26 degrees, and these are
+   * what that measures: 113 at the median, 88 at the fifth percentile, and 63
+   * for the least, a quad in the outer lane of a bend. They were 83, 65 and
+   * 46 at 2.2 times life size, and 48, 37 and 30 before the lens was
+   * narrowed. They are held from getting worse.
    */
-  assert.ok(at(0.5) >= 75, `the median is ${at(0.5)}`);
-  assert.ok(at(0.05) >= 60, `the 5th percentile is ${at(0.05)}`);
-  assert.ok(widths[0] >= 42, `the least is ${widths[0]}`);
+  assert.ok(at(0.5) >= 100, `the median is ${at(0.5)}`);
+  assert.ok(at(0.05) >= 80, `the 5th percentile is ${at(0.05)}`);
+  assert.ok(widths[0] >= 56, `the least is ${widths[0]}`);
 });
 
 test('the camera never crosses the line, and stops short of it square to the finish', () => {
@@ -288,7 +292,7 @@ test('a phone held upright gets a lens wide enough to show the pack, and a wide 
   assert.ok(across(fovFor(FINISH_FOV, 9 / 16, FINISH_MIN_HORIZONTAL), 9 / 16) >= FINISH_MIN_HORIZONTAL - 0.1);
 });
 
-test('the winner\'s picture is aimed at the winner, from the infield, a fixed way off, when the flip is half way round', () => {
+test('the winner\'s picture is aimed at the winner, from the infield, a fixed way off, with the quad the right way up', () => {
   const view = {};
   const pose = {};
   for (const { plan } of PLANS) {
@@ -301,8 +305,11 @@ test('the winner\'s picture is aimed at the winner, from the infield, a fixed wa
     assert.ok(Math.abs(view.z - Math.max(HERO_FLOOR, pose.z + HERO_RISE)) < 1e-9, 'a little below, and never under the floor');
     assert.ok(view.z >= HERO_FLOOR, 'above the ground');
     assert.equal(view.fov, HERO_FOV);
+    assert.equal(view.minH, HERO_MIN_HORIZONTAL, 'a window narrower than 16 by 9 is not given the rail\'s 44 degrees across, which would put a tall strip of sky round the quad');
     assert.ok(Math.hypot(view.x, view.y) < Math.hypot(pose.x, pose.y), 'on the infield side, nearer the middle of the oval than the winner is');
-    assert.ok(Math.abs(pose.flip - Math.PI) < 1e-6, `the quad is upside down in the picture: ${pose.flip}`);
+    /* The flip has hardly begun: the quad is the right way up, which a picture of the winner should have, and not half way round. */
+    assert.ok(pose.flip >= 0 && pose.flip < 0.1, `the flip is ${pose.flip} radians in`);
+    assert.ok(pose.tz > 0.5, `the thrust axis points up, ${pose.tz}`);
     /* A pure function: the same plan and time make the same picture. */
     const again = shots.hero(plan, t, {});
     assert.deepEqual(again, view);
@@ -332,7 +339,7 @@ function share(view, point, aspect) {
   return Math.max(Math.abs(bearing) / (horizontal / 2), Math.abs(elevation) / (vertical / 2));
 }
 
-/* Plans for the photo finish: the nine, and from a fixed list of labels the first close finish and the first clear win, which a search makes every run the same. */
+/* Plans for the zoom: the first close finish and the first clear win from a fixed list of labels, which a search makes every run the same. */
 function finishPlans() {
   const found = { close: null, clear: null };
   for (let k = 0; k < 80 && !(found.close && found.clear); k += 1) {
@@ -352,15 +359,33 @@ function finishPlans() {
   return found;
 }
 
-test('a photo finish zooms, and never past the first two quads: a clear win does not zoom at all', () => {
+/*
+ * The lens over a stretch of the finish, the way the page would ask for it,
+ * as a list of [seconds from the winner's line, vertical field]: for the
+ * smoothness and the one push in.
+ */
+function lensThrough(plan, aspect, from, to, step = 1 / 120) {
+  const a = plan.finish[plan.order[0]];
+  const view = {};
+  const out = [];
+  for (let t = a + from; t <= a + to; t += step) {
+    shots.rail(plan, t, view, false, aspect);
+    out.push([t - a, view.fov]);
+  }
+  return out;
+}
+
+test('every finish zooms: a photo finish on the first two quads, a clear win on the winner alone, and never past the fit', () => {
   const { close, clear } = finishPlans();
   const view = {};
   const first = {};
   const second = {};
   let narrowest = Infinity;
+  let zoomedClear = 0;
   for (const { plan } of [...PLANS, close, clear]) {
     const a = plan.finish[plan.order[0]];
     const b = plan.finish[plan.order[1]];
+    const photo = b - a < PHOTO_CLOSE;
     for (const aspect of [16 / 9, 9 / 16]) {
       const race = fovFor(RAIL_FOV, aspect, MIN_HORIZONTAL);
       for (let t = a - 1.5; t <= b + 1.5; t += 0.01) {
@@ -368,10 +393,15 @@ test('a photo finish zooms, and never past the first two quads: a clear win does
         const zoomed = view.fov < race - 0.5;
         if (zoomed) {
           plan.pose(plan.order[0], t, first);
-          plan.pose(plan.order[1], t, second);
-          const out = Math.max(share(view, first, aspect), share(view, second, aspect));
+          let out = share(view, first, aspect);
+          if (photo) {
+            plan.pose(plan.order[1], t, second);
+            out = Math.max(out, share(view, second, aspect));
+          } else {
+            zoomedClear += 1;
+          }
           /* The fit is to PHOTO_FIT of the way to the edge, and a soft maximum is a little over the real one, which is on the safe side. */
-          assert.ok(out <= PHOTO_FIT + 0.02, `at ${(t - a).toFixed(2)} s from the line a quad is ${out.toFixed(2)} of the way to the edge, zoomed to ${view.fov.toFixed(1)} degrees, aspect ${aspect.toFixed(2)}`);
+          assert.ok(out <= PHOTO_FIT + 0.02, `at ${(t - a).toFixed(2)} s from the line a quad is ${out.toFixed(2)} of the way to the edge, zoomed to ${view.fov.toFixed(1)} degrees, aspect ${aspect.toFixed(2)}, ${photo ? 'photo finish' : 'clear win'}`);
         }
         if (aspect > 1) {
           narrowest = Math.min(narrowest, view.fov);
@@ -380,42 +410,116 @@ test('a photo finish zooms, and never past the first two quads: a clear win does
     }
   }
   assert.ok(narrowest >= PHOTO_FOV - 0.5, `the lens goes to ${narrowest} degrees`);
+  assert.ok(zoomedClear > 0, 'a clear win zooms');
 
   /* A close finish is tight at the crossing, and it is the lens that did it. */
   const a = close.plan.finish[close.plan.order[0]];
   shots.rail(close.plan, a, view);
-  console.log(`camera: a finish ${close.gap.toFixed(3)} s apart is ${view.fov.toFixed(1)} degrees at the line, against the race lens's ${RAIL_FOV}, and a clear one ${clear.gap.toFixed(2)} s apart does not move`);
+  const photoAtLine = view.fov;
   assert.ok(view.fov <= RAIL_FOV - 8, `a close finish is ${view.fov} degrees at the line`);
 
-  /* A clear win keeps the race lens right up to the line, and the calm rail keeps its own whatever happens. */
+  /*
+   * A clear win is tight at the crossing too, on the winner, and the runner up
+   * is not what it is fitted to: it is a long way behind and outside the
+   * frame. This is what the owner asked for ("zoom in and slow mo the winner
+   * more"), and before it a clear win kept the race lens to the line.
+   */
   const c = clear.plan.finish[clear.plan.order[0]];
-  for (let t = c - 1.5; t <= c; t += 0.01) {
-    shots.rail(clear.plan, t, view);
-    assert.ok(Math.abs(view.fov - RAIL_FOV) < 0.2, `a clear win is ${view.fov} degrees at ${(t - c).toFixed(2)} s from the line`);
-  }
-  for (const t of [a - 0.5, a - 0.1, a, a + 0.2]) {
+  shots.rail(clear.plan, c, view);
+  console.log(`camera: a finish ${close.gap.toFixed(3)} s apart is ${photoAtLine.toFixed(1)} degrees at the line and a clear one ${clear.gap.toFixed(2)} s apart is ${view.fov.toFixed(1)}, against the race lens's ${RAIL_FOV}`);
+  assert.ok(view.fov <= RAIL_FOV - 8, `a clear win is ${view.fov} degrees at the line`);
+  clear.plan.pose(clear.plan.order[1], c, second);
+  assert.ok(share(view, second, 16 / 9) > 1, 'and the runner up, 0.6 s or more behind, is outside the frame: the lens is on the winner alone');
+  clear.plan.pose(clear.plan.order[0], c, first);
+  assert.ok(share(view, first, 16 / 9) < 0.35, `with the winner near the middle of it, ${share(view, first, 16 / 9)}`);
+
+  /* The calm rail keeps its own lens whatever happens. */
+  for (const t of [a - 0.5, a - 0.1, a, a + 0.2, c - 0.2, c]) {
     assert.equal(shots.rail(close.plan, t, view, true, 16 / 9).fov, CALM_FOV, 'the calm rail does not zoom');
+    assert.equal(shots.rail(clear.plan, t, view, true, 16 / 9).fov, CALM_FOV, 'and nor on a clear win');
   }
 });
 
-test('the lens is smooth through a photo finish: no step of more than 2.5 degrees in 1/120 s, and it is open again after', () => {
-  const { close } = finishPlans();
-  const view = {};
-  const a = close.plan.finish[close.plan.order[0]];
-  for (const aspect of [16 / 9, 9 / 16]) {
-    let previous = null;
-    let worst = 0;
-    for (let t = a - 2; t <= a + 2.5; t += 1 / 120) {
-      shots.rail(close.plan, t, view, false, aspect);
-      if (previous !== null) {
-        worst = Math.max(worst, Math.abs(view.fov - previous));
+test('the lens is smooth through a finish, close or clear: no step of more than 2.5 degrees in 1/120 s, one push in and one opening, open again after', () => {
+  const { close, clear } = finishPlans();
+  for (const [kind, { plan }] of [['photo finish', close], ['clear win', clear]]) {
+    for (const aspect of [16 / 9, 9 / 16]) {
+      const lens = lensThrough(plan, aspect, -2, 2.5);
+      let worst = 0;
+      for (let i = 1; i < lens.length; i += 1) {
+        worst = Math.max(worst, Math.abs(lens[i][1] - lens[i - 1][1]));
       }
-      previous = view.fov;
+      /* One push in and one opening: before its lowest point the lens never climbs back by more than half a degree from the lowest it has been, and after it never falls back from the highest it has been since. */
+      let low = 0;
+      lens.forEach(([, f], i) => {
+        if (f < lens[low][1]) {
+          low = i;
+        }
+      });
+      let pump = 0;
+      let floor = Infinity;
+      for (let i = 0; i <= low; i += 1) {
+        floor = Math.min(floor, lens[i][1]);
+        pump = Math.max(pump, lens[i][1] - floor);
+      }
+      let ceiling = -Infinity;
+      for (let i = low; i < lens.length; i += 1) {
+        ceiling = Math.max(ceiling, lens[i][1]);
+        pump = Math.max(pump, ceiling - lens[i][1]);
+      }
+      console.log(`camera: the lens through a ${kind} steps at most ${worst.toFixed(2)} degrees in 1/120 s at aspect ${aspect.toFixed(2)}, goes down to ${lens[low][1].toFixed(1)} at ${lens[low][0].toFixed(2)} s from the line, and pumps ${pump.toFixed(2)} degrees`);
+      assert.ok(worst <= 2.5, `the lens steps ${worst} degrees between frames at aspect ${aspect}, ${kind}`);
+      assert.ok(pump <= 0.5, `the lens pumps ${pump} degrees at aspect ${aspect}, ${kind}`);
+      assert.ok(Math.abs(lens.at(-1)[1] - fovFor(FINISH_FOV, aspect, FINISH_MIN_HORIZONTAL)) < 0.1, `and 2.5 s after the line it is the finish lens, ${lens.at(-1)[1]}, ${kind}`);
     }
-    console.log(`camera: the lens through a photo finish steps at most ${worst.toFixed(2)} degrees in 1/120 s at aspect ${aspect.toFixed(2)}`);
-    assert.ok(worst <= 2.5, `the lens steps ${worst} degrees between frames at aspect ${aspect}`);
-    assert.ok(Math.abs(view.fov - fovFor(FINISH_FOV, aspect, FINISH_MIN_HORIZONTAL)) < 0.1, `and 2.5 s after the line it is the finish lens, ${view.fov}`);
   }
+});
+
+test('the winner\'s chase camera, from the cut to the results: on the winner, the right side, no faster than 50 degrees a second, the winner in frame', () => {
+  const view = {};
+  const pose = {};
+  const wrapDeg = (d) => (wrap(d) * 180) / Math.PI;
+  let worstRate = 0;
+  let nearest = Infinity;
+  let smallest = Infinity;
+  for (const { plan } of PLANS) {
+    const winner = plan.order[0];
+    const a = plan.finish[winner];
+    const cut = winnerCut(plan, 1);
+    assert.ok(cut > a, 'the cut is after the line, so that the crossing is seen from the rail');
+    assert.ok(cut <= a + 0.35, `and soon after it: ${cut - a} s`);
+    const window = slowWindow(plan);
+    const end = a + RESULTS_AFTER;
+    /* The page's own clock, at 60 frames a second, through the slow window and out of it. */
+    let t = cut;
+    shots.hero(plan, t, view);
+    let previous = Math.atan2(view.ty - view.y, view.tx - view.x);
+    while (t < end) {
+      t = advanceClock(t, 1 / 60, window);
+      const flat = shots.hero(plan, t, view);
+      plan.pose(winner, t, pose);
+      assert.ok(Math.abs(flat.tx - pose.x) < 1e-9 && Math.abs(flat.ty - pose.y) < 1e-9 && Math.abs(flat.tz - pose.z) < 1e-9, 'aimed exactly at the winner the whole way');
+      assert.ok(Math.abs(Math.hypot(flat.x - pose.x, flat.y - pose.y) - HERO_DISTANCE) < 1e-9, 'a fixed distance off');
+      assert.ok(Math.hypot(flat.x, flat.y) < Math.hypot(pose.x, pose.y), 'on the infield side');
+      assert.ok(flat.z >= HERO_FLOOR, 'and above the ground');
+      for (const aspect of [16 / 9, 9 / 16, 1]) {
+        assert.ok(inFrame(flat, pose, aspect, 2), `the winner is out of the frame ${(t - a).toFixed(2)} s after the line at aspect ${aspect.toFixed(2)}`);
+      }
+      const yaw = Math.atan2(flat.ty - flat.y, flat.tx - flat.x);
+      worstRate = Math.max(worstRate, Math.abs(wrapDeg(yaw - previous)) * 60);
+      previous = yaw;
+      const away = Math.hypot(flat.x - pose.x, flat.y - pose.y, flat.z - pose.z);
+      nearest = Math.min(nearest, away);
+      /* How much of a phone held upright's height the quad's span is: HERO_MIN_HORIZONTAL is what keeps it from being a speck in a tall strip. */
+      const tall = 2 * away * Math.tan((fovFor(flat.fov, 9 / 16, flat.minH) * Math.PI) / 360);
+      smallest = Math.min(smallest, (0.347 * FLEET_SCALE) / tall);
+    }
+  }
+  console.log(`camera: the winner's chase camera turns at most ${worstRate.toFixed(1)} degrees a second of the page's own, from the cut to the results`);
+  assert.ok(worstRate <= 50, `the chase camera turns ${worstRate} degrees a second`);
+  assert.ok(nearest > 2, `and it is never nearer the quad than ${nearest} m, which is a quad's span clear`);
+  console.log(`camera: on a phone held upright the quad's span is ${(100 * smallest).toFixed(0)} per cent of the chase camera's height`);
+  assert.ok(smallest >= 0.4, `the quad is ${smallest} of a phone's height under the chase camera, which is a speck`);
 });
 
 test('the lamps are in frame from the first amber to green, on a wide window and on a phone', () => {

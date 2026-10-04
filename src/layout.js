@@ -68,20 +68,29 @@ export const FIELD = Object.freeze({ width: 200, depth: 100 });
 /*
  * How much larger than life the fleet is drawn. A five inch quad is 0.35 m
  * across its props, a dot from the 20 m the rail camera stands from the line,
- * and the brief wants the leaders to read as quads. The ceiling is the
- * planner, which keeps every pair at least 0.88 m apart
- * (measured over 36 plans, the least closest approach in any of them was
- * 0.879 m, the median 0.900), so a quad's span, 0.347 m times this, has to stay
- * clear of that with room for the props of two neighbours not to meet. At 2.2
- * it is 0.76 m, which leaves 0.12 m in the worst case. It was 1.7, set when
- * the planner's guarantee was read as 0.5 m, and the quads were still too small
- * to follow; the rest of their size is the camera's lens. The start blocks
- * grow with it (padSize is the block's own scale, 0.6 m at life size), so a
- * quad sits on a block it fits, and a block is still under half the lane
- * spacing across.
+ * and the brief wants the leaders to read as quads. The planner keeps every
+ * pair at least 0.88 m apart (measured over 36 plans, the least closest
+ * approach in any of them was 0.879 m, the median 0.900), and a quad's span is
+ * 0.347 m times this.
+ *
+ * 2.2 was the most a quad could be without its props ever meeting a
+ * neighbour's: 0.76 m across, 0.12 m to spare. It is 3.0 on purpose, on the
+ * owner's word of 2026-10-04 that larger still was wanted and a bit comical
+ * was fine: a quad is 1.04 m across, which clears the 1.3 m between two lanes
+ * and the 2.4 m between two rows of the grid, and in the closest passes the
+ * props of two quads overlap by about 0.16 m. They are translucent discs, so
+ * it reads as a bump and not as a fault. At 3.4 two quads in neighbouring
+ * lanes would touch, and that is where it stops being a bit comical.
+ *
+ * The start blocks do not grow with it. A block is as tall as the plan says a
+ * quad sits on its foam (LATTICE.blockHeight, 0.32 m), and that is what a
+ * block is at BLOCK_SCALE 2.2, the old scale of the fleet; tests/layout.test.js
+ * holds the two together. So a quad of 3.0 sits on a block built for 2.2, and
+ * its props hang over the sides of it, which is part of the joke.
  */
-export const FLEET_SCALE = 2.2;
-export const PAD_SIZE = 0.6 * FLEET_SCALE;
+export const FLEET_SCALE = 3.0;
+export const BLOCK_SCALE = 2.2;
+export const PAD_SIZE = 0.6 * BLOCK_SCALE;
 
 /* How far inside the line a flag stands: the inner edge of the 12 m track. */
 const FLAG_INSET = 6;

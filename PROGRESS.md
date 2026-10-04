@@ -494,3 +494,79 @@ Not measured: a real GPU, a real phone, any browser but Chromium, how the zoom f
 ### Open questions for the owner
 
 Whether the quads want to be bigger still (it means a lower minimum horizontal field, and narrower windows pay for it), and whether the picture should be shifted clear of the timing tower.
+
+
+## 2026-10-04 | milestone 5, follow up | Quads three times life size, and the winner's moment
+
+The owner's words, in order: "make the quads larger still, its ok to be a bit commical, and zoom in and slow mo the winnder more", and, while that was being built, "also the final photo the quad is upside down" with a picture of the results page. Nothing here changes the draw or the plan: the same receipt flies the same race, and only how big the quads are drawn, how the finish is filmed and how fast it plays have moved. No decision in this entry needed the owner: no algorithm, no dependency, no partner or sponsor, no other repository. The two asks are recorded here with the date, 2026-10-04, as what this entry covers.
+
+### What changed
+
+- **The results photo is the right way up.** It was taken 0.45 s after the line, when the winner's flip is exactly half way round (`flip` is pi there), which the fourth milestone chose as the dramatic frame and the test asserted by name ("when the flip is half way round"). That was the bug, not a detail: the one picture of the winner there is had the winner upside down. `HERO_AFTER` is 0.1 s, with the flip 4 degrees in, so the quad is upright and at the line, and the test now holds `flip < 0.1` and the thrust axis pointing up.
+- **The quads are drawn 3.0 times life size, up from 2.2**, on purpose. At 2.2 the planner's 0.88 m spacing left 0.12 m between props; at 3.0 a quad is 1.04 m across and the props of two quads overlap by about 0.16 m in the closest passes (translucent discs, so it reads as a bump). 3.4 would touch the next lane, which is where it stops being a bit comical, so it stops at 3.0. The start blocks keep 2.2 (`BLOCK_SCALE`): a block is as tall as the plan says a quad sits on its foam, so a quad of 3.0 stands on a block built for 2.2 with its props over the sides. `QUAD_HALF`, which the zoom fits, is 0.55 m, and tags stand 0.7 m over a quad, not 0.55.
+- **Every finish is slow, not only a photo finish.** `slowWindow` in `src/show.js` runs the clock at a third of its speed from 0.8 s before the winner crosses to 1.0 s after, which is the whole of the flip: 5.4 s of the page's own. The photo finish's own window is inside it. `SLOW.close` is now `camera.js`'s `PHOTO_CLOSE`, so the lens and the clock cannot disagree about what a photo finish is.
+- **Every finish zooms, on the winner alone in a clear win.** `photoFit` fits the first two quads in a photo finish and the winner in a clear win (`isPhoto`), and `railLens` runs its window to 1.5 s past whichever it fitted. A clear win used to keep the race lens to the line; it goes down to 14 to 17 degrees at the line now, and it is still one push in and one opening.
+- **The picture cuts to the winner's chase camera for the flip.** The `hero` shot, which is the results page's picture, is the live cutaway: a tenth of a second after the line for a clear win and 0.05 s after the runner up for a photo finish (`winnerCut`), held to the results, with the tags put away under it. It is not made when more than one winner is drawn (the second and third place cross while the first is flipping) and not under reduced motion (a cut is a jump of the picture). It has its own minimum horizontal field, `HERO_MIN_HORIZONTAL` 30, so a phone held upright is not shown a tall strip of sky. When the page opens, the canvas the paper fades in over is left on the chase frame and not put back to an empty frame of the track.
+- **The results arrive 2 s after the last drawn winner, down from 2.6** (`RESULTS_AFTER`, now exported from `src/show.js` so the tests can read it): for one winner that is 3 s of slow flip and 1 s of the winner flying on, 4 s of the page's own, where it was 2.6 s at full speed.
+- **`body[data-shot]` is `rail` or `chase`** through the race and the finish, a hook for the checks that read the page from outside, like `data-state` and `data-lamps`.
+- **Tests.** `tests/camera.test.js` has 17 tests (16): the zoom test and the smoothness test are rewritten for both kinds of finish, with a new "no pump" measure, and a new test holds the chase camera from the cut to the results. `tests/show.test.js` has 15 (13): the slow window and the cut. **`scripts/shots.js`**: the `photo` scenario reads the flip's length in the page's own seconds and the cut from `data-shot`, and a new `stay` scenario holds that two winners and reduced motion keep the rail. `CLAUDE.md` has the fleet at 3.0 with its reason, the winner's moment, and the upright photo; the README says what a finish does.
+
+### Measured
+
+    npm test        142 of 142 pass (139 before: the chase camera test and two show tests)
+    npm run lint    16 of 16 clean
+    node scripts/csp.js --check   both pages current
+    node scripts/shots.js   138 of 138 checks, ten scenarios (flow 37, sheet 18, actions 11, sound 20, reduced 7, reload 13, phone 6, bare 10,
+                            photo 10, stay 6), 8 min 45 s of wall clock; the one run before it, of photo and stay alone, was 15 of 16 (see below)
+
+    the top three's width at 1920 by 1080, over the nine camera plans, 2.2 times life size and now:
+        5th percentile 65 and 88 px, median 83 and 113, least 46 and 63
+    the lens at the line, wide window: a clear win 0.69 s apart 14.1 degrees, a finish 0.046 s apart 16.3 (the race lens is 26); over the 49
+        plans of the search the lowest the lens goes is 14.1 to 17.4 degrees wide
+    over 98 lens profiles (49 plans, wide and phone): the lens narrows to its lowest point and opens after it, with three exceptions on a
+        phone, which climb by 0.05 degrees in 1/120 s for a few frames early in the push in, 0.16 degrees at the most in all
+    the largest step in 1/120 s: a clear win 0.44 degrees wide and 1.46 on a phone, a photo finish 0.66 and 2.24
+    the chase camera, from the cut to the results over the nine plans, at the page's own clock: turns at most 46.8 degrees a second
+        (the brief's limit for the rail is 50), never nearer the quad than 2.4 m, the winner in frame in every frame at 16 by 9,
+        9 by 16 and square with 2 degrees to spare
+    on a phone held upright the quad's span is 45 per cent of the chase camera's height (30 per cent at the rail's 44 degree minimum)
+    on the page, replaying the photo finish draw at 1280 by 720: the first two tags 240 px apart at the line (243 before; 133 without a zoom),
+        3.96 s of the page's own from the line to the results (the design is 4.00), the cut 4 frames after the line of 42, held for 38
+
+    nine mutations of the new code, each file put back and compared byte for byte: winnerCut never cutting, the flip not slow, every finish
+        fitting the pair, a photo finish fitting the winner only, the hero minimum back at 44, the results inside the slow part, two winners cut
+        too, a photo finish cut before the runner up, and the fit window ending before the line: each fails at least one test, and no more than
+        two. Three live mutations of src/app.js, put back and compared byte for byte: with the tags kept under the chase camera and the slow
+        part ended a tenth of a second after the line, the flip check fails (2.22 s of the page's own against 4.00) and so does the tags check
+        (20 frames with tags), and the cut check still passes; with no chase camera the cut check and the tags check fail and the flip check
+        passes; with reduced motion and two winners both cut, both `stay` checks fail (19 of 21 and 19 of 20 finish frames on the chase camera).
+
+Not measured: a real GPU, a real phone, any browser but Chromium, how the slow motion and the chase camera feel at a real frame rate (this rasteriser draws four to ten a second), or whether anyone enjoys it. Those are the owner's pass.
+
+### What went wrong, in the order it was found
+
+- **The upside down photo was mine, and was in the tests as a feature.** See the first item above: the fourth milestone's test asserted the flip was exactly pi, by name, and the CLAUDE.md paragraph said "when the flip is half way round" as if it were load bearing. What is load bearing is that the aim is AT the winner. Both are corrected.
+- **Two layout assertions broke at 3.0, and one of them changed.** `PAD_SIZE === 0.6 * FLEET_SCALE` now reads `0.6 * BLOCK_SCALE`, and it is said here because it is a test that moved: what it protects is that a stand is as wide as its block and the block as tall as the plan's 0.32 m, and those belong to the block's scale, which was the fleet's and no longer is. The other, a float comparison, `1.8` against `1.7999999999999998`, went away with the blocks staying at 2.2.
+- **The size floors went up again**, from 75, 60 and 42 px to 100, 80 and 56, to hold what 3.0 measures (113, 88 and 63) and not to let anything pass. The test "a clear win does not zoom at all" is gone, and not because it was inconvenient: it was the behaviour the owner asked to be changed, and the replacement holds the opposite, with the runner up outside the frame to show it is the winner alone that is fitted.
+- **A photo finish's share was wrong in my last entry.** I wrote 44 per cent of races from 16 of 36 plans; check 8 flies 2,400 plans and has 37.3 per cent of them under a quarter of a second, which is the number the README and CLAUDE.md say now ("about a third"). The 36 were a small sample and I called it the rate.
+- **The chase camera's tag would have stood off the top of the picture.** I had not put a tag in the hero frame in my head: at 2.4 m and 30 degrees a tag 0.7 m over the quad is 390 px above the middle of a 720 px frame, which `placeTags` was going to place at its wish with the quad's other tags in the corner. I saw it before running the page, and put the tags away under the chase camera on purpose and held it with a check that they are.
+- **My first live check of the cut was one frame wrong.** `data-shot` was set by the first frame of the race and `data-state` by the last frame of the lights, so one sampled frame had a race and no shot. It is set with the state now, and the check held every frame of the race to the rail.
+- **My first wait check measured the wall's seconds, and would have passed with the flip left at full speed.** On this rasteriser the page's clock runs at 44 per cent of the wall's (a frame is clamped to a tenth of a second), so the results opened 9.7 s after the line for 4.3 s of the page's own, and a floor of 3.6 s of wall would have been cleared by 2.5 s of page. It adds the page's own seconds, a tenth at most a frame, and bounds them from both sides.
+- **A "pump" measure that flagged three phone profiles.** Counting any rise over 0.05 degrees in 1/120 s found 3 of 98: a rise of 0.05 degrees a frame for three frames, 0.16 degrees in all, before the lens had begun to close. The test holds the total pump to half a degree, which they are well under, and says so.
+
+### Decisions to know about
+
+- **The speed steps, it does not ramp.** The clock goes from full speed to a third in one frame at 0.8 s before the line and back at 1 s after: that was how the photo finish worked, and it is now every finish. If it reads as abrupt the fix is a ramp of the rate over a tenth of a second, which `advanceClock` can do in closed form for a linear ramp, and it is not made.
+- **The slow part is one constant for all** (`SLOW.rate`, 1/3), and the lengths are three (`SLOW.before`, `WINNER.after`, `RESULTS_AFTER`). A clear win is 0.8 s before the line and not 0.5, so that the whole of the push in, which begins about 0.7 s before it, is slow.
+- **Two winners and reduced motion still slow down** and the rail still zooms on the winner for two winners; only the cut is not made, and the calm rail never zooms. A person who asked for less motion has the slow part and a "Skip to the result" they cannot miss.
+- **The chase camera is 2.4 m from the winner at 30 degrees**, which is 81 per cent of the frame's height for the quad's span and about half for the quad seen from the side. Nothing in a flip left the frame in the pictures looked at, but the test holds the quad's centre and not its extent.
+
+### What I saw and did not fix
+
+- **On a phone with sound on, the Sound and Present buttons stand over the race clock.** Seen in the phone pictures of the finish, 390 by 844: the clock is behind them. It was there before this entry (the button appears after the first gesture) and is not made worse by it.
+- **The timing tower still covers the left fifth of the frame** in the approach, and the beat's lettering can still stand over a tag on the rail.
+- **Nobody has watched the slow motion or the chase camera move.** On paper the lens steps at most 0.66 degrees in 1/120 s wide and the chase camera turns 46.8 degrees a second; how it feels at the real frame rate, three times slower, is the owner's pass.
+
+### Open questions for the owner
+
+Whether 5.4 s of slow finish is too long (it is three constants), whether the quads want to touch at 3.4 or stay where their props only overlap, and whether the chase camera should be a little further off the winner so that the flip has more room.

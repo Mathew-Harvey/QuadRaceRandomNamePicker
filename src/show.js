@@ -3,9 +3,10 @@
  *
  * Everything the screens decide that is not a pixel lives here, so that it can
  * be held by tests in Node: what a pasted list means, what the odds are said
- * in words, when the lamps go, how the race clock runs through a photo finish,
- * which beats are spoken and when, who is where at a moment and how far
- * behind, and where each tag may stand so that no two cover each other.
+ * in words, when the lamps go, how the race clock runs through the finish and
+ * when the picture cuts to the winner, which beats are spoken and when, who is
+ * where at a moment and how far behind, and where each tag may stand so that
+ * no two cover each other.
  *
  * NOTHING HERE DECIDES A RESULT. The order is the draw's, made and sealed
  * before any of this runs, and the plan is built from it. What is in this file
@@ -36,6 +37,7 @@
 
 import { LIMITS, canonicalName } from './draw.js';
 import { makeRng } from './choreo.js';
+import { PHOTO_CLOSE } from './camera.js';
 
 /* ------------------------------------------------------------------ */
 /* The list                                                            */
@@ -151,13 +153,15 @@ export function lightsAt(plan, t) {
 /* The race clock                                                      */
 /* ------------------------------------------------------------------ */
 
-export const SLOW = Object.freeze({ before: 0.8, rate: 1 / 3, close: 0.25, after: 0.1 });
+/* `close` is the camera's number, so that the lens and the clock agree on what a photo finish is: a quarter of a second between first and second. */
+export const SLOW = Object.freeze({ before: 0.8, rate: 1 / 3, close: PHOTO_CLOSE, after: 0.1 });
 
 /*
  * The photo finish. When first and second are under a quarter of a second
  * apart, the last 0.8 s before the line plays at a third of speed, and the
  * slow part runs on until second has crossed too, so both crossings are in
- * it. Null when there is none.
+ * it. Null when there is none. It is what the beat says and what the lens
+ * zooms on; the clock runs through slowWindow, which contains it.
  */
 export function photoWindow(plan) {
   if (plan.count < 2) {
@@ -172,11 +176,67 @@ export function photoWindow(plan) {
 }
 
 /*
+ * THE WINNER'S MOMENT. Every finish plays slowly, not only a photo finish:
+ * the last 0.8 s before the winner crosses and the second after it, which is
+ * the whole of the flip, at a third of the speed, so five and a half seconds
+ * of the page's own go to what was under two. The owner's words were "zoom in
+ * and slow mo the winner more", and the clear wins, which are more than half
+ * of them, had neither. The slow part starts a little before the lens does:
+ * the zoom is a push in over the last 0.7 s, and it should all be slow.
+ *
+ * `after` is how long past the line the slow part runs. `cut` is when the live
+ * picture goes from the rail to the winner's chase camera, in race seconds: a
+ * tenth of a second after the line for a clear win, which is where the results
+ * page's photo is taken (the quad upright and at the line), and `cutPhoto`
+ * after the runner up for a photo finish, so that both crossings are seen from
+ * the rail first. The rail stays up when more than one winner is drawn,
+ * because the second and third place cross while the first is flipping and
+ * the cut would lose them.
+ */
+export const WINNER = Object.freeze({ after: 1.0, cut: 0.1, cutPhoto: 0.05 });
+
+/*
+ * The span of race time the clock runs slowly through, for every finish: from
+ * 0.8 s before the winner crosses to a second after. A photo finish's own
+ * window ends sooner (the runner up crosses within a quarter of a second), so
+ * this one holds it.
+ */
+export function slowWindow(plan) {
+  const a = plan.finish[plan.order[0]];
+  return { from: a - SLOW.before, to: a + WINNER.after };
+}
+
+/*
+ * How long after the last drawn winner crosses the results arrive, in race
+ * seconds: the flip, which plays at a third of the speed to a second past the
+ * line (slowWindow), and then a second at the speed of the race, which is the
+ * winner flying on, before the page opens. It was 2.6 when the flip played at
+ * full speed and the page came 2.6 s after the line; it is four seconds of the
+ * page's own now for a single winner.
+ */
+export const RESULTS_AFTER = 2;
+
+/*
+ * When the live picture cuts to the winner's chase camera, in race seconds,
+ * or null when it does not: more than one winner drawn, or fewer than two
+ * quads to have a second. The page also skips it for a person who has asked
+ * for less motion, a cut being a jump of the picture.
+ */
+export function winnerCut(plan, winners = 1) {
+  if (winners !== 1 || plan.count < 2) {
+    return null;
+  }
+  const a = plan.finish[plan.order[0]];
+  const b = plan.finish[plan.order[1]];
+  return b - a < SLOW.close ? b + WINNER.cutPhoto : a + WINNER.cut;
+}
+
+/*
  * The race clock after `wall` more seconds of the page's own: one to one,
- * and a third as fast inside the photo finish. Exact at the edges of the
- * window, so that stepping a frame at a time and stepping all at once land on
- * the same time, which is what lets a slow machine and a fast one see the
- * same race.
+ * and a third as fast inside the slow window (slowWindow, or any window it
+ * is given). Exact at the edges of the window, so that stepping a frame at a
+ * time and stepping all at once land on the same time, which is what lets a
+ * slow machine and a fast one see the same race.
  */
 export function advanceClock(t, wall, window) {
   let remaining = wall;

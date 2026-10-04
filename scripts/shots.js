@@ -32,8 +32,10 @@
  *   phone   the same, on a phone held upright.
  *   photo   a kept draw whose first two cross the line 0.07 s apart, replayed
  *           at the real speed: the beat, the last 0.8 s at a third of the
- *           speed, and the winner still on the glass after the line, where
- *           the flip is.
+ *           speed, the lens closed in on the pair, the flip played slowly and
+ *           the picture cut to the winner's chase camera for it.
+ *   stay    the rail stays up when the chase camera would lose somebody: two
+ *           winners drawn, and a person who has asked for less motion.
  *   bare    no WebGL, and no CDN: the draw is still made, sealed and shown.
  *
  * EVERY CAPTURE ASSERTS ITS STATE FIRST. On a software rasteriser a frame
@@ -80,10 +82,10 @@ import { crc32, deflateSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { openPage } from '../tests/lib/page.js';
 import {
-  fingerprint, parseReceipt, receiptFragment, receiptText, replayOf,
+  drawWithSeed, fingerprint, parseReceipt, receiptFragment, receiptText, replayOf,
 } from '../src/draw.js';
 import { makePlan } from '../src/choreo.js';
-import { photoWindow } from '../src/show.js';
+import { RESULTS_AFTER, SLOW, WINNER, photoWindow, slowWindow } from '../src/show.js';
 
 const root = resolve(fileURLToPath(import.meta.url), '..', '..');
 
@@ -1029,6 +1031,7 @@ const SAMPLER = `(() => {
       clock: Number(c[0]) * 60 + Number(c[1]),
       beat: document.getElementById('hud-beat').textContent,
       state: document.body.dataset.state,
+      shot: document.body.dataset.shot || '',
       tags,
     });
     requestAnimationFrame(frame);
@@ -1041,17 +1044,21 @@ const SAMPLER = `(() => {
  * photo-finish.json, found by a search over seeds; it is a receipt in the log,
  * which the page replays and never issues). It shows what only a finish like
  * that shows, the last 0.8 s before the line at a third of the speed with the
- * beat that says so, and what every finish should show: the winner is still on
- * the glass after the line, which is where the flip is. It was a flip nobody
- * saw, because the rail's frame ended a few metres after the line.
+ * beat that says so and the lens closed in on the pair, and what every finish
+ * shows since the owner asked for the winner to be zoomed on and slowed more:
+ * the flip at a third of the speed, from the winner's chase camera, which the
+ * picture cuts to after the runner up has crossed. It was a flip nobody saw,
+ * because the rail's frame ended a few metres after the line, and then one
+ * seen small from the rail at full speed.
  */
 async function photo() {
   note(`${stamp()} photo finish: a kept draw whose first two cross 0.07 s apart`);
   const receipt = JSON.parse(await readFile(join(root, 'tests', 'lib', 'photo-finish.json'), 'utf8'));
   const derived = await replayOf(receipt);
   const plan = makePlan({ order: derived.order, showSeed: derived.showSeed, length: receipt.length });
-  const slow = photoWindow(plan);
-  check('photo', 'the draw in the log is a photo finish, with a window for the slow motion', Boolean(slow), JSON.stringify(slow));
+  const closeFinish = photoWindow(plan);
+  const slow = slowWindow(plan);
+  check('photo', 'the draw in the log is a photo finish, with a window for the slow motion', Boolean(closeFinish), JSON.stringify(closeFinish));
   const winner = receipt.names[derived.order[0]];
   const runnerUp = receipt.names[derived.order[1]];
   const entry = JSON.stringify(JSON.stringify([receipt]));
@@ -1065,6 +1072,8 @@ async function photo() {
     await page.click('#log .acts button');
     await page.until("document.body.dataset.state === 'finish'", 240000, 'the finish');
     await shot(page, 'ph1-finish');
+    await page.until("document.body.dataset.shot === 'chase' || document.body.dataset.state === 'results'", 30000, 'the chase camera');
+    await shot(page, 'ph2-chase');
     await page.until("document.body.dataset.state === 'results'", 60000, 'the results');
     const samples = await page.evaluate('window.__s');
     const beats = [];
@@ -1083,6 +1092,7 @@ async function photo() {
       }
     }
     const mean = (xs) => xs.reduce((sum, x) => sum + x, 0) / Math.max(1, xs.length);
+    /* The page's clock stops at the line, so what can be read is the approach: from 0.8 s before it, in steps a third the size. */
     const before = steps.filter((s) => s.at > 15 && s.at < slow.from - 0.2).map((s) => s.d);
     const inside = steps.filter((s) => s.at > slow.from + 0.1 && s.at < slow.to - 0.1).map((s) => s.d);
     const ratio = mean(inside) / mean(before);
@@ -1094,35 +1104,97 @@ async function photo() {
      * picture is, which is the one thing about the lens that can be read from
      * outside the page. Measured both ways, with the zoom taken out and in.
      */
-    const crossing = samples.find((s) => s.state === 'finish');
+    const finishing = samples.filter((s) => s.state === 'finish');
+    const crossing = finishing[0];
     const where = (name) => crossing && crossing.tags.find((t) => t.name === name);
     const apart = where(winner) && where(runnerUp) ? Math.abs(where(winner).x - where(runnerUp).x) : NaN;
     note(`at the line the winner's tag and the runner up's stand ${apart.toFixed(0)} px apart at 1280 by 720`);
     /* 243 px with the zoom and 133 without it, over one replay of the same draw: the line is between them. */
     check('photo', 'at the line the first two are far enough apart on the glass that the lens has closed in on them', apart >= 190, `${apart} px`);
-    /* Race seconds, which the page's clock stops counting at the line: a frame is worth the time since the last, no more than the tenth of a second the page clamps it to. */
-    const after = samples.filter((s) => s.state === 'finish');
-    let seen = 0;
-    let frames = 0;
-    for (let i = 1; i < after.length; i += 1) {
-      if (after[i].tags.some((t) => t.name === winner && t.x > 0 && t.x < 1280)) {
-        seen += Math.min(0.1, (after[i].at - after[i - 1].at) / 1000);
-        frames += 1;
+    /*
+     * The flip is slow, and the results wait for it. The page counts a frame
+     * as no more than a tenth of a second of its own, so on a slow machine its
+     * seconds are longer than the wall's, and what is added up here is the
+     * page's own: a tenth of a second at most for each frame the sampler saw.
+     * From the line to the results that is WINNER.after over SLOW.rate for the
+     * slow part and the rest of RESULTS_AFTER at the speed of the race, four
+     * seconds. With the flip at full speed it is RESULTS_AFTER and the first
+     * bound fails; with the slow part twice as long the second does.
+     */
+    const opened = samples.find((s) => s.state === 'results');
+    let waited = NaN;
+    if (opened && crossing) {
+      waited = 0;
+      for (let i = samples.indexOf(crossing) + 1; i <= samples.indexOf(opened); i += 1) {
+        waited += Math.min(0.1, (samples[i].at - samples[i - 1].at) / 1000);
       }
     }
-    note(`the last 0.8 s ran at ${ratio.toFixed(2)} of the speed over ${inside.length} frames; the winner's tag stood on the glass for ${seen.toFixed(2)} s of race time after the line, ${frames} of ${after.length} frames`);
-    /* Measured both ways: 1.04 s with the rail turned to the line and 0.48 s with it looking abeam of where it parked (the tag of a top three quad stands where its quad is, and a quad has gone before its tag does). */
-    check('photo', 'the winner is on the glass for three quarters of a second after the line, which is where the flip is', seen >= 0.75, `${seen.toFixed(2)} s`);
+    const expected = WINNER.after / SLOW.rate + (RESULTS_AFTER - WINNER.after);
+    note(`from the line to the results, ${waited.toFixed(2)} s of the page's own; the design is ${expected.toFixed(2)} s`);
+    check('photo', 'the flip is played at a third of the speed, and the results wait for it', waited >= 0.9 * expected && waited <= 1.15 * expected, `${waited.toFixed(2)} s, against ${expected.toFixed(2)} s`);
+    /*
+     * The picture: every frame up to the line is the rail, the first frame
+     * after it is the rail too (both crossings are seen from there), and then
+     * the winner's chase camera takes over and keeps the picture to the
+     * results without going back. The tags are put away under it.
+     */
+    const race = samples.filter((s) => s.state === 'race');
+    const cutAt = finishing.findIndex((s) => s.shot === 'chase');
+    const held = cutAt > 0 && finishing.slice(cutAt).every((s) => s.shot === 'chase');
+    check('photo', 'the race is filmed from the rail, and so is the crossing', race.length > 20 && race.every((s) => s.shot === 'rail') && crossing && crossing.shot === 'rail', `${race.length} race frames, the first finish frame is ${crossing && crossing.shot}`);
+    check('photo', 'then the picture cuts to the winner\'s chase camera and stays there until the results', held && finishing.length - cutAt >= 0.5 * finishing.length, `cut at frame ${cutAt} of ${finishing.length} after the line`);
+    check('photo', 'there are no tags over the chase camera\'s picture', held && finishing.slice(cutAt).every((s) => s.tags.length === 0), `${finishing.slice(Math.max(0, cutAt)).filter((s) => s.tags.length).length} frames with tags`);
+    note(`the picture cut to the chase camera ${cutAt} frames after the line, of ${finishing.length}, and held for ${finishing.length - cutAt}`);
     console12('photo', page);
   } finally {
     await page.close();
   }
 }
 
+/*
+ * Where the chase camera must not be: two winners drawn, whose second and
+ * third place cross while the first is flipping, and a person who has asked
+ * for less motion, for whom a cut is a jump of the picture. In both the picture
+ * stays on the rail to the results, and the finish is still played. The same
+ * draw as the photo finish, with two winners and with reduced motion.
+ */
+async function stay() {
+  note(`${stamp()} the rail stays up: two winners, and reduced motion`);
+  const photoDraw = JSON.parse(await readFile(join(root, 'tests', 'lib', 'photo-finish.json'), 'utf8'));
+  const two = await drawWithSeed(photoDraw.names, photoDraw.seed, {
+    title: 'Two winners', now: new Date('2026-10-03T12:00:00Z'), winners: 2, length: 30,
+  });
+  const cases = [
+    ['two winners', two, {}],
+    ['reduced motion', photoDraw, { reducedMotion: true }],
+  ];
+  for (const [label, receipt, options] of cases) {
+    const entry = JSON.stringify(JSON.stringify([receipt]));
+    /* Speed 2, so that the finish, which plays at a third of its speed, is still a dozen frames or more of the sampler's. */
+    const page = await open({
+      width: 1280, height: 720, query: { speed: '2' }, ...options, seed: [`localStorage.setItem('webfpv-picker/v1/log', ${entry});`],
+    });
+    try {
+      await ready(page);
+      await page.evaluate(SAMPLER);
+      await page.evaluate("document.getElementById('log-box').open = true");
+      await page.click('#log .acts button');
+      await page.until("document.body.dataset.state === 'results'", 240000, `the results, ${label}`);
+      const samples = await page.evaluate('window.__s');
+      const finishing = samples.filter((s) => s.state === 'finish');
+      const chase = samples.filter((s) => s.shot === 'chase').length;
+      check('stay', `${label}: the finish is played, and the picture never leaves the rail`, finishing.length >= 5 && chase === 0 && finishing.every((s) => s.shot === 'rail'), `${finishing.length} finish frames, ${chase} on the chase camera`);
+      console12('stay', page);
+    } finally {
+      await page.close();
+    }
+  }
+}
+
 /* ------------------------------------------------------------------ */
 
 const SCENARIOS = {
-  flow, sheet, actions, sound, reduced, reload, phone, bare, photo,
+  flow, sheet, actions, sound, reduced, reload, phone, bare, photo, stay,
 };
 
 async function main() {

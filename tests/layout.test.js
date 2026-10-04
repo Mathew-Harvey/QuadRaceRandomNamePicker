@@ -32,7 +32,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GRID, LATTICE, makeCourse } from '../src/course.js';
 import {
-  FIELD, FLEET_SCALE, PAD_SIZE, buildCourseFor, buildDocument,
+  BLOCK_SCALE, FIELD, PAD_SIZE, buildCourseFor, buildDocument,
 } from '../src/layout.js';
 import { fromThree, toThree } from '../src/frame.js';
 import { startBlockDims } from '../sim/src/art/startblock.js';
@@ -108,7 +108,7 @@ test('there is exactly one startPads, and its nine stands are under the nine lan
   assert.equal(pad.dims.pads, course.lanes);
   assert.equal(pad.dims.spacing, LATTICE.laneSpacing);
   assert.equal(pad.dims.padSize, PAD_SIZE);
-  assert.equal(PAD_SIZE, 0.6 * FLEET_SCALE);
+  assert.equal(PAD_SIZE, 0.6 * BLOCK_SCALE);
   /* The simulator's own placement of stand i, from sim/src/render/scene.js: along the pads' heading from the element's origin. */
   const standAt = (i) => {
     const off = (i - (course.lanes - 1) / 2) * pad.dims.spacing;
